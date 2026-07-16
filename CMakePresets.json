@@ -1,0 +1,19 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [{
+    "name": "maya2027-vs2022",
+    "displayName": "Maya 2027 - Visual Studio 2022",
+    "generator": "Visual Studio 17 2022",
+    "architecture": "x64",
+    "binaryDir": "${sourceDir}/build/maya2027-mcp-vs2022",
+    "cacheVariables": {
+      "MAYA_DEVKIT_ROOT": "${sourceDir}/vendor/devkitBase",
+      "MAYA_LOCATION": "C:/Program Files/Autodesk/Maya2027"
+    }
+  }],
+  "buildPresets": [
+    { "name": "maya2027-release", "configurePreset": "maya2027-vs2022", "configuration": "Release" },
+    { "name": "maya2027-debug", "configurePreset": "maya2027-vs2022", "configuration": "Debug" }
+  ]
+}

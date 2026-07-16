@@ -1,0 +1,3 @@
++ maya-mcp @PROJECT_VERSION@ ./maya-mcp
+MAYA_MCP_VERSION=@PROJECT_VERSION@
+
