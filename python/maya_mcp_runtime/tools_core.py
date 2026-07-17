@@ -206,6 +206,118 @@ def _set_attribute(plug: str, value: Any, attribute_type: str | None) -> None:
         cmds.setAttr(plug, value)
 
 
+def _control_points(shape: str, size: float) -> list[tuple[float, float, float]]:
+    if shape == "square":
+        return [
+            (0, -size, -size),
+            (0, -size, size),
+            (0, size, size),
+            (0, size, -size),
+            (0, -size, -size),
+        ]
+    if shape == "diamond":
+        return [
+            (0, 0, size),
+            (0, size, 0),
+            (0, 0, -size),
+            (0, -size, 0),
+            (0, 0, size),
+        ]
+    if shape == "arrow":
+        return [
+            (0, 0, size),
+            (0, size * 0.55, size * 0.2),
+            (0, size * 0.25, size * 0.2),
+            (0, size * 0.25, -size),
+            (0, -size * 0.25, -size),
+            (0, -size * 0.25, size * 0.2),
+            (0, -size * 0.55, size * 0.2),
+            (0, 0, size),
+        ]
+    return [
+        (-size, -size, -size),
+        (-size, -size, size),
+        (-size, size, size),
+        (-size, size, -size),
+        (-size, -size, -size),
+        (size, -size, -size),
+        (size, -size, size),
+        (-size, -size, size),
+        (-size, size, size),
+        (size, size, size),
+        (size, -size, size),
+        (size, -size, -size),
+        (size, size, -size),
+        (-size, size, -size),
+        (size, size, -size),
+        (size, size, size),
+    ]
+
+
+def _create_control(operation: dict[str, Any], aliases: dict[str, Any]) -> str:
+    name = str(operation["name"])
+    shape = operation.get("shape", "circle")
+    size = float(operation.get("size", 1.0))
+    if shape == "circle":
+        node = cmds.circle(
+            name=name,
+            normal=operation.get("normal", [1.0, 0.0, 0.0]),
+            radius=size,
+            constructionHistory=False,
+        )[0]
+    else:
+        if shape == "custom":
+            points = [
+                tuple(float(component) * size for component in point)
+                for point in operation["points"]
+            ]
+        else:
+            points = _control_points(shape, size)
+        degree = int(operation.get("degree", 1))
+        node = cmds.curve(name=name, degree=degree, point=points)
+        if operation.get("closed", False) and points[0] != points[-1]:
+            node = cmds.closeCurve(
+                node,
+                replaceOriginal=True,
+                preserveShape=0,
+                constructionHistory=False,
+            )[0]
+
+    if operation.get("parent"):
+        node = (
+            cmds.parent(node, _resolve_alias(operation["parent"], aliases))
+            or [node]
+        )[0]
+    world = operation.get("space", "world") == "world"
+    if "matrix" in operation:
+        cmds.xform(node, matrix=operation["matrix"], worldSpace=world)
+    if "translate" in operation:
+        cmds.xform(node, translation=operation["translate"], worldSpace=world)
+    if "rotate" in operation:
+        cmds.xform(node, rotation=operation["rotate"], worldSpace=world)
+    if "scale" in operation:
+        cmds.xform(node, scale=operation["scale"], worldSpace=world)
+
+    for curve_shape in cmds.listRelatives(
+        node, shapes=True, fullPath=True, type="nurbsCurve"
+    ) or []:
+        if "color_rgb" in operation:
+            cmds.setAttr(f"{curve_shape}.overrideEnabled", 1)
+            cmds.setAttr(f"{curve_shape}.overrideRGBColors", 1)
+            cmds.setAttr(
+                f"{curve_shape}.overrideColorRGB", *operation["color_rgb"]
+            )
+        elif "color" in operation:
+            cmds.setAttr(f"{curve_shape}.overrideEnabled", 1)
+            cmds.setAttr(f"{curve_shape}.overrideRGBColors", 0)
+            cmds.setAttr(f"{curve_shape}.overrideColor", int(operation["color"]))
+        if "line_width" in operation and cmds.attributeQuery(
+            "lineWidth", node=curve_shape, exists=True
+        ):
+            cmds.setAttr(f"{curve_shape}.lineWidth", operation["line_width"])
+    return node
+
+
 def _validate_operation(operation: dict[str, Any], aliases: dict[str, Any]) -> None:
     op = operation["op"]
     if op == "create":
@@ -249,6 +361,65 @@ def _validate_operation(operation: dict[str, Any], aliases: dict[str, Any]) -> N
     elif op in {"connect", "disconnect"}:
         _resolve_plug(operation.get("source", ""), aliases)
         _resolve_plug(operation.get("destination", ""), aliases)
+    elif op == "create_control":
+        if not operation.get("name"):
+            raise state.ToolError(
+                "INVALID_ARGUMENT", "create_control requires name"
+            )
+        if operation.get("shape", "circle") == "custom" and not operation.get(
+            "points"
+        ):
+            raise state.ToolError(
+                "INVALID_ARGUMENT", "custom create_control requires points"
+            )
+        if operation.get("parent"):
+            _resolve_alias(operation["parent"], aliases)
+    elif op == "create_ik_handle":
+        if "start_joint" not in operation or "end_joint" not in operation:
+            raise state.ToolError(
+                "INVALID_ARGUMENT",
+                "create_ik_handle requires start_joint and end_joint",
+            )
+        _resolve_alias(operation["start_joint"], aliases)
+        _resolve_alias(operation["end_joint"], aliases)
+        if operation.get("curve"):
+            _resolve_alias(operation["curve"], aliases)
+        if operation.get("parent"):
+            _resolve_alias(operation["parent"], aliases)
+    elif op == "create_constraint":
+        if not operation.get("constraint_type"):
+            raise state.ToolError(
+                "INVALID_ARGUMENT", "create_constraint requires constraint_type"
+            )
+        if not operation.get("drivers") or "driven" not in operation:
+            raise state.ToolError(
+                "INVALID_ARGUMENT",
+                "create_constraint requires drivers and driven",
+            )
+        for driver in operation["drivers"]:
+            _resolve_alias(driver, aliases)
+        _resolve_alias(operation["driven"], aliases)
+        if operation.get("constraint_type") == "pole_vector" and len(
+            operation["drivers"]
+        ) != 1:
+            raise state.ToolError(
+                "INVALID_ARGUMENT",
+                "pole_vector constraints require exactly one driver",
+            )
+        if operation.get("world_up_object"):
+            _resolve_alias(operation["world_up_object"], aliases)
+    elif op == "set_driven_keys":
+        if not operation.get("driver_plug") or not operation.get("driven_plug"):
+            raise state.ToolError(
+                "INVALID_ARGUMENT",
+                "set_driven_keys requires driver_plug and driven_plug",
+            )
+        if not operation.get("driven_keys"):
+            raise state.ToolError(
+                "INVALID_ARGUMENT", "set_driven_keys requires driven_keys"
+            )
+        _resolve_plug(operation["driver_plug"], aliases)
+        _resolve_plug(operation["driven_plug"], aliases)
     else:
         raise state.ToolError("INVALID_ARGUMENT", f"Unsupported node operation: {op}")
 
@@ -260,7 +431,14 @@ def node_apply(arguments: dict[str, Any], call: state.CallState) -> dict[str, An
     plan: list[dict[str, Any]] = []
     preflight_aliases: dict[str, Any] = {}
     alias_producing_ops = {
-        "create", "duplicate", "rename", "parent", "set_transform"
+        "create",
+        "duplicate",
+        "rename",
+        "parent",
+        "set_transform",
+        "create_control",
+        "create_ik_handle",
+        "create_constraint",
     }
     for index, operation in enumerate(operations):
         _validate_operation(operation, preflight_aliases)
@@ -391,19 +569,228 @@ def node_apply(arguments: dict[str, Any], call: state.CallState) -> dict[str, An
                         "CONNECTION_CONFLICT",
                         f"Attribute already exists: {node}.{attribute}",
                     )
+                add_args: dict[str, Any] = {"longName": attribute}
+                if operation.get("nice_name"):
+                    add_args["niceName"] = operation["nice_name"]
                 if attribute_type == "string":
-                    cmds.addAttr(node, longName=attribute, dataType="string")
+                    add_args["dataType"] = "string"
+                elif attribute_type == "enum" or operation.get("enum_names"):
+                    add_args["attributeType"] = "enum"
+                    add_args["enumName"] = ":".join(operation["enum_names"])
                 else:
-                    cmds.addAttr(node, longName=attribute, attributeType=attribute_type)
+                    add_args["attributeType"] = attribute_type
+                if "min_value" in operation:
+                    add_args["minValue"] = operation["min_value"]
+                if "max_value" in operation:
+                    add_args["maxValue"] = operation["max_value"]
+                if "default_value" in operation and attribute_type != "string":
+                    add_args["defaultValue"] = operation["default_value"]
+                if "keyable" in operation:
+                    add_args["keyable"] = bool(operation["keyable"])
+                cmds.addAttr(node, **add_args)
                 state.mark_mutated(call)
-                if "value" in operation:
+                plug = f"{node}.{attribute}"
+                if "value" in operation or (
+                    "default_value" in operation and attribute_type == "string"
+                ):
                     _set_attribute(
-                        f"{node}.{attribute}",
-                        operation["value"],
+                        plug,
+                        operation.get("value", operation.get("default_value")),
                         attribute_type,
                     )
-                output["plug"] = f"{node}.{attribute}"
+                if "channel_box" in operation:
+                    cmds.setAttr(
+                        plug, channelBox=bool(operation["channel_box"])
+                    )
+                if "locked" in operation:
+                    cmds.setAttr(plug, lock=bool(operation["locked"]))
+                output["plug"] = plug
+                output["value"] = state.safe_get_attr(plug)
                 call.changes.append({"kind": "attribute.added", "plug": output["plug"]})
+                node = ""
+            elif op == "create_control":
+                node = _create_control(operation, aliases)
+                state.mark_mutated(call)
+                output["node"] = state.node_ref(node)
+                output["shapes"] = [
+                    state.node_ref(curve_shape)
+                    for curve_shape in (
+                        cmds.listRelatives(
+                            node,
+                            shapes=True,
+                            fullPath=True,
+                            type="nurbsCurve",
+                        )
+                        or []
+                    )
+                ]
+                call.changes.append(
+                    {"kind": "rig.control_created", "target": output["node"]}
+                )
+            elif op == "create_ik_handle":
+                start_joint = _resolve_alias(operation["start_joint"], aliases)
+                end_joint = _resolve_alias(operation["end_joint"], aliases)
+                for role, joint in (
+                    ("start_joint", start_joint),
+                    ("end_joint", end_joint),
+                ):
+                    if cmds.nodeType(joint) != "joint":
+                        raise state.ToolError(
+                            "INVALID_TARGET", f"{role} is not a joint: {joint}"
+                        )
+                solver = operation.get("solver", "ikRPsolver")
+                ik_args: dict[str, Any] = {
+                    "startJoint": start_joint,
+                    "endEffector": end_joint,
+                    "solver": solver,
+                }
+                if operation.get("name"):
+                    ik_args["name"] = operation["name"]
+                if solver == "ikSplineSolver":
+                    if operation.get("curve"):
+                        ik_args["curve"] = _resolve_alias(
+                            operation["curve"], aliases
+                        )
+                        ik_args["createCurve"] = False
+                    else:
+                        ik_args["createCurve"] = bool(
+                            operation.get("create_curve", True)
+                        )
+                ik_nodes = cmds.ikHandle(**ik_args) or []
+                if len(ik_nodes) < 2:
+                    raise state.ToolError(
+                        "MAYA_ERROR", "Maya did not create an IK handle and effector"
+                    )
+                node = ik_nodes[0]
+                if operation.get("parent"):
+                    node = (
+                        cmds.parent(
+                            node, _resolve_alias(operation["parent"], aliases)
+                        )
+                        or [node]
+                    )[0]
+                state.mark_mutated(call)
+                output["node"] = state.node_ref(node)
+                output["effector"] = state.node_ref(ik_nodes[1])
+                if len(ik_nodes) > 2 and cmds.objExists(ik_nodes[2]):
+                    output["curve"] = state.node_ref(ik_nodes[2])
+                output["solver"] = solver
+                call.changes.append(
+                    {"kind": "rig.ik_handle_created", "target": output["node"]}
+                )
+            elif op == "create_constraint":
+                drivers = [
+                    _resolve_alias(driver, aliases)
+                    for driver in operation["drivers"]
+                ]
+                driven = _resolve_alias(operation["driven"], aliases)
+                constraint_type = operation["constraint_type"]
+                constraint_args: dict[str, Any] = {}
+                if operation.get("name"):
+                    constraint_args["name"] = operation["name"]
+                if constraint_type != "pole_vector":
+                    constraint_args["maintainOffset"] = bool(
+                        operation.get("maintain_offset", True)
+                    )
+                if constraint_type == "parent":
+                    if operation.get("skip_translate"):
+                        constraint_args["skipTranslate"] = operation[
+                            "skip_translate"
+                        ]
+                    if operation.get("skip_rotate"):
+                        constraint_args["skipRotate"] = operation["skip_rotate"]
+                    result_nodes = cmds.parentConstraint(
+                        drivers, driven, **constraint_args
+                    )
+                elif constraint_type == "orient":
+                    if operation.get("skip_rotate"):
+                        constraint_args["skip"] = operation["skip_rotate"]
+                    result_nodes = cmds.orientConstraint(
+                        drivers, driven, **constraint_args
+                    )
+                elif constraint_type == "point":
+                    if operation.get("skip_translate"):
+                        constraint_args["skip"] = operation["skip_translate"]
+                    result_nodes = cmds.pointConstraint(
+                        drivers, driven, **constraint_args
+                    )
+                elif constraint_type == "scale":
+                    if operation.get("skip_translate"):
+                        constraint_args["skip"] = operation["skip_translate"]
+                    result_nodes = cmds.scaleConstraint(
+                        drivers, driven, **constraint_args
+                    )
+                elif constraint_type == "aim":
+                    if operation.get("aim_vector"):
+                        constraint_args["aimVector"] = operation["aim_vector"]
+                    if operation.get("up_vector"):
+                        constraint_args["upVector"] = operation["up_vector"]
+                    if operation.get("world_up_type"):
+                        constraint_args["worldUpType"] = operation[
+                            "world_up_type"
+                        ]
+                    if operation.get("world_up_object"):
+                        constraint_args["worldUpObject"] = _resolve_alias(
+                            operation["world_up_object"], aliases
+                        )
+                    if operation.get("skip_rotate"):
+                        constraint_args["skip"] = operation["skip_rotate"]
+                    result_nodes = cmds.aimConstraint(
+                        drivers, driven, **constraint_args
+                    )
+                else:
+                    result_nodes = cmds.poleVectorConstraint(
+                        drivers[0], driven, **constraint_args
+                    )
+                if not result_nodes:
+                    raise state.ToolError(
+                        "MAYA_ERROR", f"Maya did not create {constraint_type} constraint"
+                    )
+                node = result_nodes[0]
+                state.mark_mutated(call)
+                output["node"] = state.node_ref(node)
+                output["drivers"] = [state.node_ref(item) for item in drivers]
+                output["driven"] = state.node_ref(driven)
+                output["constraint_type"] = constraint_type
+                call.changes.append(
+                    {"kind": "rig.constraint_created", "target": output["node"]}
+                )
+            elif op == "set_driven_keys":
+                driver_plug = _resolve_plug(operation["driver_plug"], aliases)
+                driven_plug = _resolve_plug(operation["driven_plug"], aliases)
+                if not cmds.objExists(driver_plug) or not cmds.objExists(
+                    driven_plug
+                ):
+                    raise state.ToolError(
+                        "TARGET_NOT_FOUND",
+                        f"Driven-key plug does not exist: {driver_plug} -> {driven_plug}",
+                    )
+                for key in operation["driven_keys"]:
+                    key_args: dict[str, Any] = {
+                        "currentDriver": driver_plug,
+                        "driverValue": key["driver_value"],
+                        "value": key["value"],
+                    }
+                    if key.get("in_tangent"):
+                        key_args["inTangentType"] = key["in_tangent"]
+                    if key.get("out_tangent"):
+                        key_args["outTangentType"] = key["out_tangent"]
+                    cmds.setDrivenKeyframe(driven_plug, **key_args)
+                state.mark_mutated(call)
+                output.update(
+                    {
+                        "driver_plug": driver_plug,
+                        "driven_plug": driven_plug,
+                        "key_count": len(operation["driven_keys"]),
+                    }
+                )
+                call.changes.append(
+                    {
+                        "kind": "rig.driven_keys_created",
+                        "driver": driver_plug,
+                        "driven": driven_plug,
+                    }
+                )
                 node = ""
             elif op in {"connect", "disconnect"}:
                 source = _resolve_plug(operation.get("source", ""), aliases)

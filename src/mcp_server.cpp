@@ -365,6 +365,8 @@ public:
             {"endpoint", endpoint_},
             {"discoveryFile", discoveryFile_.string()},
             {"pendingMainThreadRequests", dispatcher_.queued()},
+            {"scriptExecutionEnabled",
+             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
             {"unsafeCodeEnabled", environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
             {"lastError", lastError_},
         };
@@ -841,6 +843,8 @@ private:
             {"token", token_},
             {"protocolVersion", kProtocolVersion},
             {"pluginVersion", MAYA_MCP_VERSION},
+            {"scriptExecutionEnabled",
+             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
             {"unsafeCodeEnabled", environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
         };
         writeJsonFileAtomically(discoveryFile_, discovery);

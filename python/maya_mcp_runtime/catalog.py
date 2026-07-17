@@ -265,8 +265,10 @@ TOOLS = [
         "maya.node.apply",
         "Apply Maya Node Operations",
         "Atomically create, duplicate, rename, delete, parent, transform, set "
-        "attributes, and connect nodes. Ordered steps can reference an earlier "
-        "result with '$stepId'. Use validate_only to resolve targets without edits.",
+        "attributes, connect nodes, and assemble production rigs with custom "
+        "controls, IK handles, pole vectors, constraints, and driven keys. "
+        "Ordered steps can reference an earlier result with '$stepId'. Use "
+        "validate_only to resolve targets without edits.",
         _object(
             {
                 "operations": {
@@ -290,6 +292,10 @@ TOOLS = [
                                     "add_attribute",
                                     "connect",
                                     "disconnect",
+                                    "create_control",
+                                    "create_ik_handle",
+                                    "create_constraint",
+                                    "set_driven_keys",
                                 ],
                             },
                             "node": NODE_SELECTOR,
@@ -316,6 +322,144 @@ TOOLS = [
                                 "default": "world",
                             },
                             "force": {"type": "boolean", "default": False},
+                            "shape": {
+                                "type": "string",
+                                "enum": [
+                                    "circle",
+                                    "square",
+                                    "cube",
+                                    "diamond",
+                                    "arrow",
+                                    "custom",
+                                ],
+                                "default": "circle",
+                            },
+                            "size": {
+                                "type": "number",
+                                "exclusiveMinimum": 0,
+                                "maximum": 1000000,
+                                "default": 1,
+                            },
+                            "points": {
+                                "type": "array",
+                                "items": VECTOR3,
+                                "minItems": 2,
+                                "maxItems": 1000,
+                            },
+                            "degree": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 7,
+                                "default": 1,
+                            },
+                            "closed": {"type": "boolean", "default": False},
+                            "normal": VECTOR3,
+                            "color": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 31,
+                            },
+                            "color_rgb": RGB3,
+                            "line_width": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 10,
+                            },
+                            "start_joint": NODE_SELECTOR,
+                            "end_joint": NODE_SELECTOR,
+                            "solver": {
+                                "type": "string",
+                                "enum": [
+                                    "ikRPsolver",
+                                    "ikSCsolver",
+                                    "ikSplineSolver",
+                                    "ikSpringSolver",
+                                ],
+                                "default": "ikRPsolver",
+                            },
+                            "curve": NODE_SELECTOR,
+                            "create_curve": {
+                                "type": "boolean",
+                                "default": True,
+                            },
+                            "drivers": {
+                                "type": "array",
+                                "items": NODE_SELECTOR,
+                                "minItems": 1,
+                                "maxItems": 16,
+                            },
+                            "driven": NODE_SELECTOR,
+                            "constraint_type": {
+                                "type": "string",
+                                "enum": [
+                                    "parent",
+                                    "orient",
+                                    "point",
+                                    "scale",
+                                    "aim",
+                                    "pole_vector",
+                                ],
+                            },
+                            "maintain_offset": {
+                                "type": "boolean",
+                                "default": True,
+                            },
+                            "aim_vector": VECTOR3,
+                            "up_vector": VECTOR3,
+                            "world_up_type": {
+                                "type": "string",
+                                "enum": [
+                                    "scene",
+                                    "object",
+                                    "objectrotation",
+                                    "vector",
+                                    "none",
+                                ],
+                            },
+                            "world_up_object": NODE_SELECTOR,
+                            "skip_translate": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["x", "y", "z"]},
+                                "uniqueItems": True,
+                                "maxItems": 3,
+                            },
+                            "skip_rotate": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["x", "y", "z"]},
+                                "uniqueItems": True,
+                                "maxItems": 3,
+                            },
+                            "driver_plug": {"type": "string", "minLength": 3},
+                            "driven_plug": {"type": "string", "minLength": 3},
+                            "driven_keys": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "driver_value": {"type": "number"},
+                                        "value": {"type": "number"},
+                                        "in_tangent": {"type": "string"},
+                                        "out_tangent": {"type": "string"},
+                                    },
+                                    "required": ["driver_value", "value"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "nice_name": {"type": "string", "maxLength": 128},
+                            "enum_names": {
+                                "type": "array",
+                                "items": {"type": "string", "maxLength": 64},
+                                "minItems": 1,
+                                "maxItems": 128,
+                            },
+                            "min_value": {"type": "number"},
+                            "max_value": {"type": "number"},
+                            "default_value": {},
+                            "keyable": {"type": "boolean"},
+                            "channel_box": {"type": "boolean"},
+                            "locked": {"type": "boolean"},
                         },
                         "required": ["op"],
                         "additionalProperties": False,
@@ -746,7 +890,8 @@ TOOLS = [
         "Execute Python or MEL",
         "Unsafe escape hatch for capabilities not yet represented by typed tools. "
         "Runs with the user's full Maya privileges, is not sandboxed or safely "
-        "interruptible, and requires MAYA_MCP_ALLOW_UNSAFE_CODE=1.",
+        "interruptible, and requires explicit per-session approval from Maya's "
+        "Maya MCP menu or MAYA_MCP_ALLOW_UNSAFE_CODE=1.",
         _object(
             {
                 "language": {"type": "string", "enum": ["python", "mel"]},

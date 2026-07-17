@@ -45,6 +45,7 @@ try {
     Invoke-MayaTest 'tests\viewport_contract_test.py' 'Viewport contract test'
     Invoke-MayaTest 'tests\scene_map_test.py' 'Viewport scene-map test'
     Invoke-MayaTest 'tests\rig_preview_test.py' 'Rig-preview test'
+    Invoke-MayaTest 'tests\rig_operations_test.py' 'Typed rig-operations test'
     Invoke-MayaTest 'tests\smoke_test.py' 'Maya plug-in smoke test'
 } finally {
     foreach ($name in $environmentNames) {

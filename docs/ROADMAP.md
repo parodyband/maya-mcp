@@ -1,9 +1,9 @@
 # Roadmap and Known Limits
 
-Version 0.3 is a complete development slice. It is useful now, but it is not
+Version 0.4 is a complete development slice. It is useful now, but it is not
 the claimed end state.
 
-## Verified in 0.3
+## Verified in 0.4
 
 - Maya 2027.1 SDK and Visual Studio 2022 Release build
 - MCP 2025-11-25 initialization and authenticated HTTP transport
@@ -16,6 +16,9 @@ the claimed end state.
 - Geometry creation
 - Three-joint creation and orientation
 - Control creation
+- Custom control shapes, RP/SC/spline IK handles, pole vectors, parent/orient/
+  point/scale/aim constraints, rig attributes, utility connections, and driven keys
+- One-click, per-session Python/MEL approval from the Maya MCP menu
 - Skin binding and inspection
 - Transactional cleanup
 - Bounded native VP2 depth command and strict batch/error contracts
@@ -25,7 +28,7 @@ the claimed end state.
   cleanup-failure honesty
 
 The automated gate loads the absolute packaged plug-in and packaged Python
-runtime through mayapy, requires version 0.3 and all 18 tools, then unloads the
+runtime through mayapy, requires version 0.4 and all 18 tools, then unloads the
 plug-in cleanly.
 
 ## Interactive viewport validation
@@ -49,7 +52,7 @@ The harness verifies PNG/JPEG capture, perspective and orthographic cameras,
 pixel dimensions, device-pixel ratio evidence, joint scaling, shaded/wireframe/
 component picking, selection preservation, projection, normalized rays,
 playback, isolate select, timer dispatch, authenticated transport, and unload.
-The default v0.3 harness requires `mayaMcpVp2Capture`, scene-map and rig-preview
+The default v0.4 harness requires `mayaMcpVp2Capture`, scene-map and rig-preview
 tools, direct native VP2 depth, bounded base64 metadata, the MCP
 `include_depth` path, and the explicit `UNSUPPORTED_PASS` response for object-ID
 capture. A stale or legacy package fails rather than silently skipping the new

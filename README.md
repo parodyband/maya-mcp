@@ -3,7 +3,7 @@
 A native Maya 2027 plug-in that gives MCP clients a typed, authenticated, and
 vision-aware interface to Maya.
 
-Version 0.3 is a working development preview. It includes the native transport,
+Version 0.4 is a working development preview. It includes the native transport,
 Maya main-thread dispatch, scene and rigging tools, native VP2 depth readback,
 vision grounding, resources, prompts, security controls, and isolated batch and
 interactive test harnesses.
@@ -19,6 +19,8 @@ interactive test harnesses.
   and DAG paths
 - Transactional node edits with step aliases, revision guards, dry-run
   validation, and Maya undo chunks
+- Typed custom controls, IK handles, pole vectors, production constraints,
+  rig attributes, utility connections, and driven keys
 - Viewport capture as real MCP ImageContent
 - Optional bounded native Viewport 2.0 depth readback with exact format metadata
 - Conservative screen-space scene maps with canonical node identity
@@ -26,7 +28,7 @@ interactive test harnesses.
 - Geometry, materials, animation, joint chains, controls, and skin binding
 - Non-serializing rig previews with bounded lifetime, strict ownership, and
   preflighted one-chunk acceptance when Maya undo is enabled
-- Guarded Python and MEL execution when a typed tool cannot express an operation
+- A Maya MCP menu for server status and one-click, per-session Python/MEL approval
 
 The connected MCP host supplies the vision model. `maya.viewport.capture`
 returns the color image, camera matrices, projected joints, and optional native
@@ -53,6 +55,17 @@ Open a new terminal to read those user environment variables.
 
 ## Quick start
 
+One command builds, installs, and configures the plug-in to autoload:
+
+~~~powershell
+.\scripts\setup.ps1
+~~~
+
+Open Maya. The server starts automatically and the **Maya MCP** menu shows its
+status. Normal rigging does not require Python/MEL approval.
+
+## Developer build and tests
+
 Build the Release package:
 
 ~~~powershell
@@ -68,7 +81,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.3.0"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.4.0"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -80,14 +93,14 @@ Validate the real GPU viewport in a separate, isolated Maya process:
 Evidence is written below `build\viewport-validation\`. The launcher never
 attaches to or closes a Maya process that it did not start.
 
-Install the module for your Maya user:
+Manual developer install:
 
 ~~~powershell
 .\scripts\install-module.ps1
 ~~~
 
-Restart Maya. Open **Windows > Settings/Preferences > Plug-in Manager**, then
-load maya_mcp.mll. The server starts with the plug-in.
+Open **Windows > Settings/Preferences > Plug-in Manager**, then load
+maya_mcp.mll. `setup.ps1` performs this installation and configures autoload.
 
 Verify it from Maya's Script Editor:
 
@@ -152,7 +165,8 @@ Do not commit tokens or place them in shared project files.
 
 - maya.context.get — scene, units, time, selection, viewport, renderer, undo
 - maya.scene.query — bounded DAG/DG queries with canonical references
-- maya.node.apply — transactional create, edit, connect, and delete operations
+- maya.node.apply — transactional graph edits plus controls, IK, pole vectors,
+  constraints, rig attributes, utility connections, and driven keys
 - maya.selection.set — replace, add, remove, toggle, or clear selection
 - maya.history.apply — apply Maya undo or redo steps
 
@@ -185,17 +199,22 @@ Do not commit tokens or place them in shared project files.
 All normal edit tools use named Maya undo chunks. Python and MEL cannot be
 honestly sandboxed or force-cancelled inside Maya.
 
-## Enable Python and MEL execution
+## Python and MEL fallback
 
-Script execution is disabled by default. To enable it for a trusted local
-session, set the flag before Maya loads the plug-in:
+Script execution remains disabled by default. When a typed operation genuinely
+cannot express the task, click:
+
+**Maya MCP > Allow Python/MEL Automation This Session**
+
+The approval applies immediately and expires when Maya closes. It does not
+require a restart. Headless automation can still opt in before launch:
 
 ~~~powershell
 $env:MAYA_MCP_ALLOW_UNSAFE_CODE = '1'
 & 'C:\Program Files\Autodesk\Maya2027\bin\maya.exe'
 ~~~
 
-Loading the plug-in still does not make remote network access available. The
+Approving scripts still does not make remote network access available. The
 server remains bound to 127.0.0.1 and requires its bearer token.
 
 ## Maya commands

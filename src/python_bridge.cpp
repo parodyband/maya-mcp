@@ -90,13 +90,22 @@ bool PythonBridge::initialize(std::string& error) {
         catalog_ = Json::object();
         return false;
     }
+    if (!MGlobal::executePythonCommand(
+            "from maya_mcp_runtime import ui as _maya_mcp_ui; "
+            "_maya_mcp_ui.install_menu()",
+            false,
+            false)) {
+        MGlobal::displayWarning(
+            "maya-mcp: server started, but the Maya MCP menu could not be installed");
+    }
     return true;
 }
 
 void PythonBridge::shutdown() noexcept {
     try {
         MGlobal::executePythonCommand(
-            "from maya_mcp_runtime import state as _maya_mcp_state; "
+            "from maya_mcp_runtime import state as _maya_mcp_state, "
+            "ui as _maya_mcp_ui; _maya_mcp_ui.remove_menu(); "
             "_maya_mcp_state.shutdown_callbacks()",
             false,
             false);

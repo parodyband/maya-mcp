@@ -158,6 +158,10 @@ Supported operation names:
 - add_attribute
 - connect
 - disconnect
+- create_control
+- create_ik_handle
+- create_constraint
+- set_driven_keys
 
 An operation ID creates a step alias. Later operations reference it with a
 dollar-prefixed string:
@@ -191,6 +195,67 @@ dollar-prefixed string:
 ~~~
 
 Set validate_only to true to resolve and validate without editing.
+
+Rig operations share the same transaction and aliases. This request creates a
+custom pole control, RP IK handle, pole-vector constraint, an animator
+attribute, and foot-roll driven keys in one undo step:
+
+~~~json
+{
+  "label": "Build left leg IK",
+  "operations": [
+    {
+      "id": "pole",
+      "op": "create_control",
+      "name": "L_legPole_CTRL",
+      "shape": "diamond",
+      "size": 2.0,
+      "translate": [4, 8, 6],
+      "color_rgb": [0.2, 0.5, 1.0]
+    },
+    {
+      "id": "legIk",
+      "op": "create_ik_handle",
+      "name": "L_leg_IKH",
+      "start_joint": "L_hip_JNT",
+      "end_joint": "L_ankle_JNT",
+      "solver": "ikRPsolver"
+    },
+    {
+      "op": "create_constraint",
+      "constraint_type": "pole_vector",
+      "drivers": ["$pole"],
+      "driven": "$legIk",
+      "name": "L_leg_PVC"
+    },
+    {
+      "op": "add_attribute",
+      "node": "$pole",
+      "attribute": "footRoll",
+      "attribute_type": "double",
+      "min_value": -10,
+      "max_value": 10,
+      "default_value": 0,
+      "keyable": true
+    },
+    {
+      "op": "set_driven_keys",
+      "driver_plug": "$pole.footRoll",
+      "driven_plug": "$legIk.rotateX",
+      "driven_keys": [
+        {"driver_value": -10, "value": -35},
+        {"driver_value": 0, "value": 0},
+        {"driver_value": 10, "value": 55}
+      ]
+    }
+  ]
+}
+~~~
+
+`create_constraint` supports parent, orient, point, scale, aim, and pole-vector
+constraints. Utility nodes for IK/FK blending can be created with `create` and
+wired with `connect`; enum, numeric limits, defaults, keyability, channel-box
+visibility, and locking are supported by `add_attribute`.
 
 ## Content tools
 
@@ -382,8 +447,9 @@ and canonical legend are implemented.
 }
 ~~~
 
-The tool is disabled unless MAYA_MCP_ALLOW_UNSAFE_CODE is enabled. Successful
-results include stdout, stderr, a JSON-safe result, and SHA-256 source hash.
+The tool is disabled unless the user approves it from the Maya MCP menu for the
+current session or sets MAYA_MCP_ALLOW_UNSAFE_CODE. Successful results include
+stdout, stderr, a JSON-safe result, and SHA-256 source hash.
 
 ## Resources
 

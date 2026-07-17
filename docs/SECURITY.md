@@ -33,7 +33,8 @@ machine.
 - Rig previews are capped at 16 active records and 8,192 owned nodes.
 - Tokens are not returned by the Maya status command.
 - Discovery files live below the user's LocalAppData directory.
-- Unsafe Python and MEL are disabled by default.
+- Python and MEL are disabled by default and can be approved from Maya's local
+  UI for only the current process.
 
 These controls follow MCP's requirements to validate Origin, bind local servers
 to loopback, and authenticate connections.
@@ -68,7 +69,12 @@ maya.script.execute is full host code execution. It can:
 AST inspection would be advisory, not a sandbox. The only honest control is to
 leave the tool disabled or grant it to a trusted client.
 
-Enable it only for one Maya launch:
+For a trusted client, enable it without restarting from:
+
+**Maya MCP > Allow Python/MEL Automation This Session**
+
+The checkbox changes only the current Maya process and shows a full-privilege
+warning. Headless sessions may instead opt in before launch:
 
 ~~~powershell
 $env:MAYA_MCP_ALLOW_UNSAFE_CODE = '1'
@@ -87,7 +93,7 @@ A complete append-only audit log is planned.
 | Scene write | node apply, geometry, animation, rig | Enabled and undo-chunked |
 | Destructive | delete, unbind, open scene | Requires explicit action fields |
 | File access | save, import, reference, export | Explicit paths and actions |
-| Host execution | Python and MEL | Disabled unless environment opt-in |
+| Host execution | Python and MEL | Disabled unless explicitly approved in Maya or by environment opt-in |
 
 MCP annotations describe risk to clients, but server-side checks remain the
 authority.
