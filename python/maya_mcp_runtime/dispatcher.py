@@ -14,11 +14,15 @@ from . import state
 from .catalog import CATALOG
 from .tools_core import CORE_HANDLERS
 from .tools_domain import DOMAIN_HANDLERS
+from .tools_rig_preview import RIG_PREVIEW_HANDLERS
+from .tools_vision import VISION_HANDLERS
 from .tools_viewport import VIEWPORT_HANDLERS
 
 HANDLERS = {
     **CORE_HANDLERS,
     **DOMAIN_HANDLERS,
+    **RIG_PREVIEW_HANDLERS,
+    **VISION_HANDLERS,
     **VIEWPORT_HANDLERS,
 }
 TOOL_DEFINITIONS = {tool["name"]: tool for tool in CATALOG["tools"]}
@@ -72,6 +76,21 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
             "INVALID_ARGUMENT",
             f"{path} must be {expected}, got {type(value).__name__}",
         )
+    if "anyOf" in schema:
+        errors = []
+        matches = 0
+        for option in schema["anyOf"]:
+            try:
+                _validate(value, option, path)
+                matches += 1
+            except state.ToolError as error:
+                errors.append(str(error))
+        if matches == 0:
+            raise state.ToolError(
+                "INVALID_ARGUMENT",
+                f"{path} must match at least one allowed shape",
+                {"errors": errors},
+            )
     if isinstance(value, dict):
         properties = schema.get("properties", {})
         missing = [key for key in schema.get("required", []) if key not in value]
@@ -174,10 +193,11 @@ def read_resource_base64(encoded: str) -> str:
     elif uri == "maya://scene/summary":
         data = _scene_summary()
     elif uri == "maya://selection":
+        selection = state.selection_snapshot()
         data = {
             "scene_epoch": state.scene_epoch(),
             "context_revision": state.context_revision(),
-            "selection": state.selection_refs(),
+            **selection,
         }
     elif uri == "maya://timeline":
         context = state.maya_context()

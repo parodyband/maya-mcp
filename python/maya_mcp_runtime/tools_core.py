@@ -9,6 +9,62 @@ import maya.cmds as cmds
 
 from . import state
 
+_CONNECTION_ITEM_LIMIT = 500
+_ATTRIBUTE_SEQUENCE_LIMIT = 256
+_ATTRIBUTE_STRING_LIMIT = 8192
+
+
+def _bounded_attribute_value(value: Any, depth: int = 0) -> Any:
+    if depth >= 6:
+        return {"truncated": True, "reason": "maximum nesting depth"}
+    if isinstance(value, str):
+        if len(value) <= _ATTRIBUTE_STRING_LIMIT:
+            return value
+        return {
+            "value_prefix": value[:_ATTRIBUTE_STRING_LIMIT],
+            "length": len(value),
+            "truncated": True,
+        }
+    if isinstance(value, (list, tuple)):
+        bounded = [
+            _bounded_attribute_value(item, depth + 1)
+            for item in value[:_ATTRIBUTE_SEQUENCE_LIMIT]
+        ]
+        if len(value) <= _ATTRIBUTE_SEQUENCE_LIMIT:
+            return bounded
+        return {
+            "items": bounded,
+            "total_items": len(value),
+            "truncated": True,
+        }
+    if isinstance(value, dict):
+        items = list(value.items())
+        bounded = {
+            str(key): _bounded_attribute_value(item, depth + 1)
+            for key, item in items[:_ATTRIBUTE_SEQUENCE_LIMIT]
+        }
+        if len(items) <= _ATTRIBUTE_SEQUENCE_LIMIT:
+            return bounded
+        return {
+            "entries": bounded,
+            "total_entries": len(items),
+            "truncated": True,
+        }
+    return value
+
+
+def _connections(
+    node: str, *, source: bool, destination: bool
+) -> tuple[list[str], int]:
+    values = cmds.listConnections(
+        node,
+        source=source,
+        destination=destination,
+        plugs=True,
+        connections=True,
+    ) or []
+    return values[:_CONNECTION_ITEM_LIMIT], len(values)
+
 
 def context_get(arguments: dict[str, Any], call: state.CallState) -> dict[str, Any]:
     del arguments
@@ -23,38 +79,33 @@ def _node_details(
     details = state.node_ref(node)
     if attributes:
         details["attributes"] = {
-            attribute: state.safe_get_attr(f"{node}.{attribute}")
+            attribute: _bounded_attribute_value(
+                state.safe_get_attr(f"{node}.{attribute}")
+            )
             for attribute in attributes
             if cmds.attributeQuery(attribute, node=node, exists=True)
         }
     if connection_mode != "none":
         incoming = connection_mode in ("incoming", "both")
         outgoing = connection_mode in ("outgoing", "both")
+        incoming_values, incoming_total = (
+            _connections(node, source=True, destination=False)
+            if incoming
+            else ([], 0)
+        )
+        outgoing_values, outgoing_total = (
+            _connections(node, source=False, destination=True)
+            if outgoing
+            else ([], 0)
+        )
         details["connections"] = {
-            "incoming": (
-                cmds.listConnections(
-                    node,
-                    source=True,
-                    destination=False,
-                    plugs=True,
-                    connections=True,
-                )
-                or []
-                if incoming
-                else []
-            ),
-            "outgoing": (
-                cmds.listConnections(
-                    node,
-                    source=False,
-                    destination=True,
-                    plugs=True,
-                    connections=True,
-                )
-                or []
-                if outgoing
-                else []
-            ),
+            "incoming": incoming_values,
+            "incoming_total": incoming_total,
+            "incoming_truncated": incoming_total > _CONNECTION_ITEM_LIMIT,
+            "outgoing": outgoing_values,
+            "outgoing_total": outgoing_total,
+            "outgoing_truncated": outgoing_total > _CONNECTION_ITEM_LIMIT,
+            "limit_per_direction": _CONNECTION_ITEM_LIMIT,
         }
     return details
 
@@ -406,7 +457,9 @@ def node_apply(arguments: dict[str, Any], call: state.CallState) -> dict[str, An
 
 def selection_set(arguments: dict[str, Any], call: state.CallState) -> dict[str, Any]:
     mode = arguments["mode"]
-    items = [state.resolve_node(item) for item in arguments.get("items", [])]
+    items = [
+        state.resolve_selection_item(item) for item in arguments.get("items", [])
+    ]
     if mode == "clear":
         cmds.select(clear=True)
     else:
@@ -418,11 +471,11 @@ def selection_set(arguments: dict[str, Any], call: state.CallState) -> dict[str,
         }
         cmds.select(items, **flags)
     state.bump_context_revision()
-    selection = state.selection_refs()
+    selection = state.selection_snapshot()
     return state.result(
         call,
-        {"selection": selection, "mode": mode},
-        f"Selection now contains {len(selection)} items",
+        {"mode": mode, **selection},
+        f"Selection now contains {selection['entry_count']} compact entries",
     )
 
 

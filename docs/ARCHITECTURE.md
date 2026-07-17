@@ -38,14 +38,16 @@ MCP lifecycle, then waits for a queued main-thread task.
 | MainThreadDispatcher | Bounded FIFO drained by a removable Maya timer callback |
 | McpServer | Loopback HTTP, authentication, sessions, and MCP routing |
 | PythonBridge | Base64 JSON boundary into Maya's bundled Python runtime |
+| Vp2CaptureCommand | Bounded VP2 render-target capture with retained callback ownership |
 | maya_mcp_runtime | Schemas, identities, undo policy, and typed Maya operations |
 
 The C++ and Python boundary is deliberate. C++ owns lifetime, concurrency,
 transport, and security. Python provides fast access to Maya commands for broad
 coverage without compiling one native command per Maya feature.
 
-High-volume mesh data, Viewport 2.0 render passes, native undo commands, and UFE
-support belong in C++ as the project matures.
+Depth render-target capture already lives in C++. High-volume mesh data,
+additional Viewport 2.0 passes, native undo commands, and UFE support will move
+into C++ as the project matures.
 
 ## Main-thread dispatcher
 
@@ -78,14 +80,19 @@ Startup order:
 
 Shutdown order:
 
-1. Reject new work.
-2. Pause the dispatcher and fail queued promises.
-3. Stop the HTTP listener.
-4. Join the listener and worker pool.
+1. Refuse unload while a dispatched tool or VP2 capture is executing.
+2. Prove no VP2 render notification remains registered.
+3. Deregister Maya commands in reverse order.
+4. Reject new work, stop HTTP, and join the listener and worker pool.
 5. Delete discovery owned by this Maya process.
 6. Remove the Maya timer callback.
-7. Deregister Maya commands in reverse order.
-8. Destroy all owned state before DLL unload.
+7. Run Python lifecycle cleanup and destroy owned state.
+8. Allow the DLL to unload.
+
+Registration and teardown are transactional around DLL safety. If a command or
+callback cannot be removed, removed commands are restored where possible and
+Maya is told to keep the plug-in loaded. A failed VP2-notification removal keeps
+its heap-owned callback state alive for a later cleanup retry.
 
 ## MCP protocol
 
@@ -121,8 +128,9 @@ Each result therefore includes:
 - every known DAG path;
 - node type, referenced state, and lock state.
 
-Clients should send node_id back when possible. DAG-instance-specific work
-should also send dag_path once those tools expose per-instance operations.
+Clients should send node_id back when possible. Stable claims supplied beside a
+node_id are checked for contradictions. DAG-instance-specific work should also
+send dag_path once those tools expose per-instance operations.
 
 scene_epoch changes after Maya creates or opens a scene, including user-driven
 file operations. scene_revision increments for MCP mutations and for observed
@@ -144,11 +152,23 @@ need guaranteed rollback.
 
 File operations and arbitrary scripts do not claim atomic rollback.
 
+Rig previews use a separate transient lifecycle. Direct Maya API modifiers avoid
+globally toggling undo; exact owned nodes are tagged by UUID and marked
+`doNotWrite`. Preview handles carry scene epoch and preview revision. Strict
+cleanup resolves every owned UUID, rejects foreign descendants, verifies no
+survivors, and retains failed records for retry. Active previews and aggregate
+owned nodes have fixed caps.
+
+Accept requires Maya undo, preflights all names and targets, then creates
+permanent rig nodes in one normal undo chunk. It is intentionally described as
+preflighted and undo-chunked, not as a native atomic transaction.
+
 ## Viewport and vision
 
 maya.viewport.capture returns:
 
 - PNG or JPEG image content;
+- optional bounded native VP2 depth data with exact render-target metadata;
 - active camera identity;
 - model-view and projection matrices;
 - clip planes;
@@ -157,12 +177,25 @@ maya.viewport.capture returns:
 - current selection;
 - projected joint locations.
 
+Color uses Maya's compatibility `M3dView` readback with fixed dimension and
+encoded-response budgets. Optional depth invokes the
+internal `mayaMcpVp2Capture` command. That command installs a scoped VP2
+end-render notification, refreshes the active view, copies the current depth
+target, downsamples it under fixed dimension and payload budgets, then removes
+the notification before returning. Failed removal retains both callback metadata
+and client data, and plug-in unload is refused until cleanup succeeds.
+
 maya.viewport.project grounds world landmarks into pixels and pixels into world
 rays. maya.viewport.pick maps a pixel to Maya nodes or components while
 restoring the user's selection.
 
-The next vision layer will use Viewport 2.0 render targets for depth, object-ID,
-normal, wireframe, and rig-overlay passes.
+maya.viewport.scene_map projects conservative object bounds and pivots while
+retaining canonical node identity. It complements the image and depth channel;
+it does not claim occlusion, instance, shared-snapshot, or segmentation truth.
+
+The next native vision layer will add stable object-ID, normal, wireframe, and
+rig-overlay passes. Object-ID requests currently return an explicit unsupported
+result rather than an unstable mapping.
 
 ## Adding a tool
 

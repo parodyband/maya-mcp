@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(maya_mcp VERSION 0.2.0 LANGUAGES CXX)
+project(maya_mcp VERSION 0.3.0 LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -39,6 +39,7 @@ add_library(maya_mcp MODULE
     src/mcp_server.cpp
     src/plugin.cpp
     src/python_bridge.cpp
+    src/vp2_capture_command.cpp
 )
 target_compile_features(maya_mcp PRIVATE cxx_std_17)
 target_compile_definitions(maya_mcp PRIVATE NT_PLUGIN REQUIRE_IOSTREAM _BOOL _CRT_SECURE_NO_WARNINGS _HAS_ITERATOR_DEBUGGING=0)
@@ -54,6 +55,8 @@ target_include_directories(maya_mcp
 target_link_directories(maya_mcp PRIVATE "${MAYA_DEVKIT_ROOT}/lib")
 target_link_libraries(maya_mcp PRIVATE
     OpenMaya
+    OpenMayaUI
+    OpenMayaRender
     Foundation
     bcrypt
     ws2_32

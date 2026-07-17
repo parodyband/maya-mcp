@@ -3,9 +3,10 @@
 A native Maya 2027 plug-in that gives MCP clients a typed, authenticated, and
 vision-aware interface to Maya.
 
-Version 0.2 is a working development preview. It includes the native transport,
-Maya main-thread dispatch, scene and rigging tools, viewport image output,
-resources, prompts, security controls, and an end-to-end standalone test.
+Version 0.3 is a working development preview. It includes the native transport,
+Maya main-thread dispatch, scene and rigging tools, native VP2 depth readback,
+vision grounding, resources, prompts, security controls, and isolated batch and
+interactive test harnesses.
 
 ## What works
 
@@ -19,13 +20,19 @@ resources, prompts, security controls, and an end-to-end standalone test.
 - Transactional node edits with step aliases, revision guards, dry-run
   validation, and Maya undo chunks
 - Viewport capture as real MCP ImageContent
+- Optional bounded native Viewport 2.0 depth readback with exact format metadata
+- Conservative screen-space scene maps with canonical node identity
 - Viewport world-to-screen projection and pixel picking
 - Geometry, materials, animation, joint chains, controls, and skin binding
+- Non-serializing rig previews with bounded lifetime, strict ownership, and
+  preflighted one-chunk acceptance when Maya undo is enabled
 - Guarded Python and MEL execution when a typed tool cannot express an operation
 
-The connected MCP host supplies the vision model. maya.viewport.capture returns
-a viewport image plus camera matrices, joint projections, selection, time,
-units, and scene revisions.
+The connected MCP host supplies the vision model. `maya.viewport.capture`
+returns the color image, camera matrices, projected joints, and optional native
+experimental renderer-native depth. `maya.viewport.scene_map` and
+`maya.viewport.pick` ground pixels back to
+canonical Maya nodes. A stable object-ID render pass remains future work.
 
 ## Prerequisites
 
@@ -61,8 +68,17 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":16,"typed_mutation":"passed","version":"0.2.0"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.3.0"}
 ~~~
+
+Validate the real GPU viewport in a separate, isolated Maya process:
+
+~~~powershell
+.\scripts\test-viewport-interactive.ps1
+~~~
+
+Evidence is written below `build\viewport-validation\`. The launcher never
+attaches to or closes a Maya process that it did not start.
 
 Install the module for your Maya user:
 
@@ -151,11 +167,14 @@ Do not commit tokens or place them in shared project files.
 
 - maya.rig.skeleton — create and orient chains or inspect joint hierarchy
 - maya.rig.controls — curve controls, offsets, colors, and constraints
+- maya.rig.preview — revise ghost joints and controls, then preflight and accept
+  them in one undo chunk
 - maya.rig.skin — bind, unbind, or inspect skinClusters
 
 ### Viewport and vision
 
-- maya.viewport.capture — image plus camera and semantic metadata
+- maya.viewport.capture — color image, semantic metadata, and optional VP2 depth
+- maya.viewport.scene_map — projected boxes and pivots with canonical node refs
 - maya.viewport.project — world-to-screen points and screen-to-world rays
 - maya.viewport.pick — pixel-to-node/component picking with selection restore
 
@@ -186,6 +205,9 @@ cmds.mayaMcpStatus()  # JSON status
 cmds.mayaMcpStop()    # stop accepting requests
 cmds.mayaMcpStart()   # restart transport and write new discovery
 cmds.mayaMcpPump()    # manually drain queued work; mainly for batch tests
+
+# Expert/native diagnostic command. MCP clients normally use viewport.capture.
+json.loads(cmds.mayaMcpVp2Capture(request='{"depth":true}'))
 ~~~
 
 ## Resources and prompts
@@ -208,6 +230,7 @@ Workflow prompts:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security model](docs/SECURITY.md)
 - [Protocol and tool API](docs/API.md)
+- [Vision-guided rigging workflow](docs/VISION_RIGGING.md)
 - [Roadmap and known limits](docs/ROADMAP.md)
 
 The devkit and generated builds are excluded from Git. CMake fetches

@@ -52,7 +52,9 @@ tools, resources, or prompts.
 
 ## Canonical node selectors
 
-Tools accept a unique Maya name, a canonical reference, or a node_id:
+Tools accept a unique Maya name or an identity-bearing canonical reference.
+Reference objects must contain `node_id`, `dag_path`, `long_name`, a non-empty
+`dag_paths` entry, or `name`; UUID-only and metadata-only objects are rejected.
 
 ~~~json
 {
@@ -77,7 +79,13 @@ A full node result includes:
 }
 ~~~
 
-Short names that resolve to multiple nodes produce TARGET_AMBIGUOUS.
+Short names that resolve to multiple nodes produce `TARGET_AMBIGUOUS`. When a
+reference includes `node_id` plus UUID, reference-node, type, or path claims,
+those claims must agree with the registered identity or the tool returns
+`NODE_REFERENCE_CONFLICT`. `maya.selection.set` preserves a returned
+`component` suffix. Only component-aware tools such as `maya.selection.set`
+and material assignment accept it; node-only tools reject component-bearing
+references instead of widening them to an owning node.
 
 ## Result envelope
 
@@ -235,6 +243,62 @@ Use action inspect with root to read a skeleton.
 Shapes are circle, square, and cube. Constraints are none, parent, orient, and
 point.
 
+### Preview rig placement
+
+`maya.rig.preview` supports `create`, `update`, `query`, `list`, `accept`, and
+`cancel`. Create and update return an epoch- and revision-bound handle. Always
+send the complete latest handle to later actions.
+
+| Action | Required input | Effect |
+|---|---|---|
+| `create` | `joints` and/or `controls` | Create a bounded, non-serializing preview |
+| `update` | latest `handle` plus changed fields | Replace the preview and issue a new handle revision |
+| `query` | latest `handle` | Return markers and the full canonical acceptance `spec` |
+| `list` | none | Return at most the 16 active previews and their specs |
+| `accept` | latest `handle`; undo enabled | Preflight and commit permanent outputs in one named undo chunk |
+| `cancel` | latest `handle` | Verify ownership and remove only preview-owned nodes |
+
+~~~json
+{
+  "action": "create",
+  "name": "Arm Preview",
+  "joints": [
+    {"id": "shoulder", "name": "L_shoulder_JNT", "position": [2, 12, 0]},
+    {"id": "elbow", "name": "L_elbow_JNT", "position": [6, 10, 0], "parent_id": "shoulder"}
+  ],
+  "controls": [
+    {"id": "elbowControl", "target_joint_id": "elbow", "shape": "circle"}
+  ]
+}
+~~~
+
+Scalar update fields merge with the previous spec. Supplying `joints` or
+`controls` replaces that entire collection. Query and list return the full spec,
+including parent, orientation, axes, colors, names, targets, constraints, and
+offset settings, so a client can verify exactly what accept will create.
+
+Preview code uses direct Maya API modifiers and never disables the user's undo
+queue or forcibly resets the dirty flag. Owned nodes have exact UUID-backed tags
+and are marked `doNotWrite`, so normal preview operations remain selection-,
+undo-, and save-neutral. Because the preview uses live DAG/DG nodes, Maya may
+honestly mark a clean scene dirty; the implementation never resets that flag.
+If a third-party callback performs a real edit synchronously, its dirty/undo
+effects are left visible.
+
+Previews do not expire on a timer. They remain until `cancel`, scene new/open,
+or plug-in unload, subject to 16 active previews and 8,192 total owned nodes.
+Strict cleanup refuses missing, tampered, or externally parented ownership and
+keeps the handle retryable.
+
+Acceptance requires Maya undo to be enabled, preflights every output and target,
+creates root-namespace names exactly as planned, and commits permanent nodes in
+one named undo chunk. This is a normal Maya undo chunk, not a native atomic
+`MPxCommand`; rollback after an unexpected Maya failure is best effort. Use
+`if_scene_revision` when the plan depends on an earlier scene read.
+
+See [Vision-guided rigging](VISION_RIGGING.md) for the full review-and-accept
+workflow.
+
 ### Bind skin
 
 ~~~json
@@ -256,8 +320,9 @@ Actions are bind, unbind, and inspect.
 
 ## Viewport tools
 
-maya.viewport.capture accepts optional width, height, format, and
-include_joint_projections. The response contains MCP image content:
+`maya.viewport.capture` accepts optional `width`, `height`, `format`,
+`include_joint_projections`, `include_depth`, and `depth_max_dimension`. The
+response contains one color MCP image:
 
 ~~~json
 {
@@ -271,16 +336,39 @@ include_joint_projections. The response contains MCP image content:
 }
 ~~~
 
-The structured result contains the camera matrices and semantic metadata, not a
-second copy of the image.
+The structured result contains camera matrices and semantic metadata, not a
+second copy of the color image. Color dimensions are capped at 2,048 by 2,048,
+and encoded color output is capped at 8,388,608 base64 characters. When
+`include_depth` is true,
+`data.native_capture.passes.depth` contains a bounded base64 native render
+target plus exact format, dimension, pitch, stride, and byte-count metadata.
+Depth is capped at a 1024-pixel maximum dimension and 4,194,304 encoded
+characters. Depth payload bytes are not duplicated into the text fallback.
+Values are the renderer-native, normally non-linear hardware depth buffer, not
+world-unit distances. Renderer-native row zero has not been normalized across
+backends, so depth is experimental and not yet guaranteed pixel-correlated with
+color. Do not use it for reconstruction without validating the backend's row
+origin.
 
-maya.viewport.project accepts world_points, nodes, and screen_points. It
-returns screen pixels or world rays.
+`maya.viewport.scene_map` returns conservative projected world-AABB boxes,
+pivots, and canonical node references. It is bounded by `max_nodes` and
+`max_candidates`, with type filtering applied before expensive projection work.
+It does not test occlusion, panel isolate state, or return a segmentation mask.
+Near-plane-crossing bounds can be conservative only for the projectable
+corners, DAG instances are not separate records, and capture/map calls are
+separate snapshots. Confirm ambiguous evidence with picking.
+
+maya.viewport.project accepts bounded `world_points`, `nodes`, and
+`screen_points` arrays. It returns screen pixels or world rays.
 
 maya.viewport.pick accepts x, y, and radius. Coordinates use a bottom-left
-origin, matching Maya's viewport API.
+origin, matching Maya's viewport API. The original selection is restored, but
+Maya temporarily changes active selection while picking, so `SelectionChanged`
+callbacks run; the tool is intentionally not annotated read-only.
 
-Viewport tools require interactive Maya.
+Viewport tools require interactive Maya. Native object-ID capture explicitly
+returns `UNSUPPORTED_PASS`; use scene maps plus picking until a stable ID pass
+and canonical legend are implemented.
 
 ## Script escape hatch
 
@@ -316,16 +404,19 @@ results include stdout, stderr, a JSON-safe result, and SHA-256 source hash.
 
 ## Common tool error codes
 
-- INVALID_ARGUMENT
-- TARGET_NOT_FOUND
-- TARGET_AMBIGUOUS
-- STALE_NODE_ID
-- SCENE_EPOCH_MISMATCH
-- REVISION_CONFLICT
-- PLUG_LOCKED
-- CONNECTION_CONFLICT
-- DIRTY_SCENE
-- VIEWPORT_UNAVAILABLE
-- VIEWPORT_CAPTURE_FAILED
-- CAPABILITY_DISABLED
-- SCRIPT_ERROR
+| Code | Meaning | Recovery |
+|---|---|---|
+| `INVALID_ARGUMENT` | Input failed semantic validation | Correct the named field and retry |
+| `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS` | Selector resolved to zero or multiple nodes | Send a canonical `node_id` reference |
+| `STALE_NODE_ID` / `SCENE_EPOCH_MISMATCH` | Identity or preview belongs to stale scene state | Re-read context and nodes, then re-plan |
+| `NODE_REFERENCE_CONFLICT` | Visible identity claims contradict `node_id` | Use an unmodified canonical reference |
+| `REVISION_CONFLICT` / `PREVIEW_REVISION_CONFLICT` | Scene or preview changed after planning | Query again and use the newest revision |
+| `PREVIEW_NOT_FOUND` / `PREVIEW_NOT_ACTIVE` | Preview was cleaned or already accepted | List previews or create a new one |
+| `PREVIEW_DAMAGED` / `PREVIEW_TAMPERED` | Owned nodes are missing or ownership is unsafe | Inspect details; repair only the named preview, then retry cancel |
+| `PREVIEW_LIMIT_EXCEEDED` / `PREVIEW_NODE_LIMIT_EXCEEDED` | Retained preview budget is full | Cancel unused previews or reduce the spec |
+| `UNDO_DISABLED` | Accept cannot guarantee a rollback path | Enable Maya undo before accepting |
+| `VIEWPORT_UNAVAILABLE` | No interactive viewport is available | Run in interactive Maya and activate a model panel |
+| `VIEWPORT_CAPTURE_TOO_LARGE` | Encoded color exceeded the response budget | Reduce width/height or use JPEG |
+| `NATIVE_VIEWPORT_CAPTURE_FAILED` / `CAPTURE_FAILED` | VP2 depth contract or renderer operation failed | Retry in a standard VP2 view; inspect error details |
+| `UNSUPPORTED_PASS` | Stable object-ID capture is not implemented | Use scene map plus pixel picking |
+| `CAPABILITY_DISABLED` | Python/MEL escape hatch is off | Prefer typed tools or explicitly opt in for a trusted session |

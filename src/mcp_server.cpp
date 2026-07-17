@@ -150,6 +150,13 @@ nlohmann::json toolFailure(
     };
 }
 
+constexpr std::size_t kMaxSerializedResultBytes =
+    16U * 1024U * 1024U;
+
+bool exceedsResultBudget(const nlohmann::json& value) {
+    return value.dump().size() > kMaxSerializedResultBytes;
+}
+
 void writeJson(httplib::Response& response, const nlohmann::json& value) {
     response.set_header("Cache-Control", "no-store");
     response.set_content(value.dump(), "application/json");
@@ -212,29 +219,67 @@ public:
     }
 
     bool start(std::string& error) {
-        std::lock_guard lifecycleLock(lifecycleMutex_);
+        std::unique_lock lifecycleLock(lifecycleMutex_);
         if (running_.load()) {
             return true;
         }
 
         try {
+            // A listener can end on its own and leave a joinable thread behind.
+            // Join it before assigning a replacement; assigning over a joinable
+            // std::thread would terminate the Maya process.
+            if (listener_.joinable()) {
+                lifecycleLock.unlock();
+                listener_.join();
+                lifecycleLock.lock();
+            }
+            if (http_ != nullptr) {
+                http_.reset();
+                {
+                    std::lock_guard sessionsLock(sessionsMutex_);
+                    sessions_.clear();
+                }
+                cleanupDiscoveryFile();
+                endpoint_.clear();
+                port_ = 0;
+                token_.clear();
+            }
+
             lastError_.clear();
             token_ = environmentValue("MAYA_MCP_TOKEN");
             if (token_.empty()) {
                 token_ = randomHex(32);
             }
 
-            http_ = std::make_unique<httplib::Server>();
-            http_->new_task_queue = []() {
-                return new httplib::ThreadPool(4, 4, 64);
+            const auto configureHttp = [this]() {
+                http_ = std::make_unique<httplib::Server>();
+                http_->set_socket_options([](socket_t socket) {
+                    // cpp-httplib defaults to SO_REUSEADDR. On Windows that can
+                    // route two Maya processes on one port to the wrong token.
+                    const BOOL enabled = TRUE;
+                    ::setsockopt(
+                        socket,
+                        SOL_SOCKET,
+                        SO_EXCLUSIVEADDRUSE,
+                        reinterpret_cast<const char*>(&enabled),
+                        sizeof(enabled));
+                });
+                http_->new_task_queue = []() {
+                    return new httplib::ThreadPool(4, 4, 64);
+                };
+                http_->set_payload_max_length(8U * 1024U * 1024U);
+                http_->set_read_timeout(10, 0);
+                http_->set_write_timeout(300, 0);
+                installRoutes();
             };
-            http_->set_payload_max_length(8U * 1024U * 1024U);
-            http_->set_read_timeout(10, 0);
-            http_->set_write_timeout(300, 0);
-            installRoutes();
+            configureHttp();
 
             port_ = configuredPort();
             if (!http_->bind_to_port("127.0.0.1", port_)) {
+                // A failed bind decommissions a cpp-httplib Server instance;
+                // recreate it before asking the OS for an ephemeral port.
+                http_.reset();
+                configureHttp();
                 port_ = http_->bind_to_any_port("127.0.0.1");
             }
             if (port_ <= 0) {
@@ -280,7 +325,8 @@ public:
 
     void stop() {
         std::unique_lock lifecycleLock(lifecycleMutex_);
-        if (!running_.exchange(false) && http_ == nullptr) {
+        if (!running_.exchange(false) && http_ == nullptr &&
+            !listener_.joinable()) {
             return;
         }
 
@@ -683,6 +729,11 @@ private:
                 toolResult = toolFailure(
                     "INVALID_TOOL_RESULT",
                     "The Maya tool returned an invalid MCP result");
+            } else if (exceedsResultBudget(toolResult)) {
+                toolResult = toolFailure(
+                    "TOOL_RESPONSE_TOO_LARGE",
+                    "The Maya tool result exceeded the 16 MiB response budget",
+                    {{"maximum_bytes", kMaxSerializedResultBytes}});
             }
             writeJson(response, jsonRpcResult(id, std::move(toolResult)));
         } catch (const std::exception& exception) {
@@ -707,7 +758,18 @@ private:
             const std::string uri = params["uri"].get<std::string>();
             auto future = dispatcher_.submit(
                 [this, uri]() { return bridge_.readResource(uri); });
-            writeJson(response, jsonRpcResult(id, future.get()));
+            Json resourceResult = future.get();
+            if (exceedsResultBudget(resourceResult)) {
+                writeJson(
+                    response,
+                    jsonRpcError(
+                        id,
+                        -32005,
+                        "Resource result exceeded the 16 MiB response budget",
+                        {{"maximum_bytes", kMaxSerializedResultBytes}}));
+                return;
+            }
+            writeJson(response, jsonRpcResult(id, std::move(resourceResult)));
         } catch (const std::exception& exception) {
             writeJson(
                 response,
