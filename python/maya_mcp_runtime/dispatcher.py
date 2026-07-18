@@ -26,6 +26,52 @@ HANDLERS = {
     **VIEWPORT_HANDLERS,
 }
 TOOL_DEFINITIONS = {tool["name"]: tool for tool in CATALOG["tools"]}
+_PUMP_INTERVAL_MS = 10
+_pump_timer: Any | None = None
+
+
+def _pump_native_queue() -> None:
+    try:
+        cmds.mayaMcpPump()
+    except RuntimeError:
+        # The timer is stopped during normal plug-in teardown. Avoid leaking a
+        # Python exception if Maya is already shutting down the command layer.
+        pass
+
+
+def install_pump_timer() -> None:
+    """Keep native MCP dispatch responsive while Maya is playing or rendering."""
+    global _pump_timer
+    remove_pump_timer()
+    if cmds.about(batch=True):
+        return
+    try:
+        from PySide6 import QtCore
+    except ImportError:
+        from PySide2 import QtCore
+
+    timer = QtCore.QTimer()
+    timer.setInterval(_PUMP_INTERVAL_MS)
+    try:
+        timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
+    except AttributeError:
+        timer.setTimerType(QtCore.Qt.PreciseTimer)
+    timer.timeout.connect(_pump_native_queue)
+    timer.start()
+    _pump_timer = timer
+
+
+def remove_pump_timer() -> None:
+    global _pump_timer
+    timer = _pump_timer
+    _pump_timer = None
+    if timer is None:
+        return
+    timer.stop()
+    try:
+        timer.timeout.disconnect(_pump_native_queue)
+    except (RuntimeError, TypeError):
+        pass
 
 
 def _type_matches(value: Any, expected: str) -> bool:

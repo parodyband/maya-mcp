@@ -38,7 +38,7 @@ if packaged_scripts not in runtime_path.parents:
 status = json.loads(cmds.mayaMcpStatus())
 if not status["running"]:
     fail(f"Maya MCP did not start: {status}")
-if status["version"] != "0.4.0":
+if status["version"] != "0.4.1":
     fail(f"Unexpected Maya MCP version: {status['version']}")
 
 with open(status["discoveryFile"], "r", encoding="utf-8") as stream:
@@ -292,14 +292,19 @@ if not any(
     for warning in failed_script["warnings"]
 ):
     fail("A failing script did not report possible partial mutation")
-# mayaMcpPump is itself a non-undoable MPxCommand; Maya reports undo disabled
-# for nested work in this batch-only path. The response must not invent a chunk.
-if failed_script["undo"]["available"]:
-    fail("The manually pumped script claimed an unavailable nested undo chunk")
-cmds.delete("partialScriptMutation")
+# The native bridge must opt into Maya undo even when a batch test manually
+# pumps the queue through a non-undoable MPxCommand.
+if failed_script["undo"] != {
+    "available": True,
+    "label": "Maya MCP failing script probe",
+}:
+    fail(f"The manually pumped script hid its recovery chunk: {failed_script}")
+cmds.undo()
+if cmds.objExists("partialScriptMutation"):
+    fail("The manually pumped failing-script chunk did not undo its mutation")
 
-# The production timer/dispatcher context is not nested inside mayaMcpPump and
-# must preserve a real recovery chunk for a failing script.
+# Native tool dispatch explicitly opts into Maya undo recording and must
+# preserve a real recovery chunk for a failing script.
 from maya_mcp_runtime.dispatcher import dispatch_base64
 
 direct_payload = {

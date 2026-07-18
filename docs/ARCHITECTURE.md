@@ -52,8 +52,10 @@ into C++ as the project matures.
 ## Main-thread dispatcher
 
 Maya APIs are generally not thread-safe. Transport workers enqueue callables
-into a 256-item FIFO. A Maya timer callback drains up to 32 items or five
-milliseconds of work per tick.
+into a 256-item FIFO. A removable Maya timer callback and an interactive Qt
+heartbeat both drain up to 32 items or five milliseconds of work per tick.
+The Qt heartbeat keeps requests moving while Maya playback suppresses timer
+callbacks. Reentrancy protection makes the two pump sources safe to overlap.
 
 The timer callback is preferable to one idle task per request:
 
@@ -64,6 +66,10 @@ The timer callback is preferable to one idle task per request:
 
 The manual mayaMcpPump command drains the same queue. Tests use it because Maya
 standalone has no interactive event loop.
+
+Native tool calls enter Python with Maya undo recording explicitly enabled;
+read-only MCP resources do not. This distinction is required because Maya's
+native Python execution API otherwise defaults to an undo-disabled context.
 
 Long Maya operations still block Maya. A timeout cannot safely kill Python,
 MEL, skinning, or many Maya commands once they begin.
@@ -86,7 +92,7 @@ Shutdown order:
 4. Reject new work, stop HTTP, and join the listener and worker pool.
 5. Delete discovery owned by this Maya process.
 6. Remove the Maya timer callback.
-7. Run Python lifecycle cleanup and destroy owned state.
+7. Stop the Qt heartbeat, run Python lifecycle cleanup, and destroy owned state.
 8. Allow the DLL to unload.
 
 Registration and teardown are transactional around DLL safety. If a command or

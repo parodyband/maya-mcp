@@ -13,7 +13,7 @@ interactive test harnesses.
 - MCP 2025-11-25 over Streamable HTTP at http://127.0.0.1:7001/mcp
 - Cryptographic bearer tokens, strict loopback binding, and Origin validation
 - Session initialization, ping, tools, resources, prompts, and session deletion
-- A bounded C++ worker pool and removable Maya main-thread timer dispatcher
+- A bounded C++ worker pool with removable Maya-timer and Qt-playback dispatch
 - Strict JSON Schema inputs and structured MCP outputs
 - Canonical node references combining scene epoch, UUID, reference context,
   and DAG paths
@@ -81,7 +81,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.4.0"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.4.1"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
