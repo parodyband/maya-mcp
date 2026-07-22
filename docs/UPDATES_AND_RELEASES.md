@@ -103,7 +103,9 @@ The Maya-side updater:
 The updater never overwrites the DLL loaded by Maya. A restart activates the new
 descriptor. Older version folders remain available for rollback.
 Client configuration does not point into those versioned folders and does not
-need to change during an update.
+need to change during an update. A newly loaded package also self-registers its
+bridge, covering migration from updater versions released before the bridge
+registry existed.
 
 Set `MAYA_MCP_DISABLE_UPDATE_CHECK=1` before launching Maya to disable the daily
 check. The manual **Check for Updates...** menu action remains available.
