@@ -33,16 +33,46 @@ $bridgeCommand = @(
 $configured = @()
 $unavailable = @()
 
+function Invoke-McpClientCommand {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Command,
+        [Parameter(Mandatory)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory)]
+        [string]$Label,
+        [switch]$AllowFailure
+    )
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $Command @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+        $details = ($output | ForEach-Object { [string]$_ }) -join ' '
+        if ($details.Length -gt 500) { $details = $details.Substring(0, 500) }
+        throw "$Label failed with exit code $exitCode. $details"
+    }
+    return $exitCode
+}
+
 if (-not $SkipCodex) {
     $codex = Get-Command codex -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($codex) {
-        & $codex.Source mcp get $serverName --json *> $null
-        if ($LASTEXITCODE -eq 0) {
-            & $codex.Source mcp remove $serverName *> $null
-            if ($LASTEXITCODE -ne 0) { throw 'Could not replace the existing Codex Maya MCP entry.' }
+        $entryExists = (Invoke-McpClientCommand -Command $codex.Source -Arguments @(
+            'mcp', 'get', $serverName, '--json'
+        ) -Label 'Codex MCP probe' -AllowFailure) -eq 0
+        if ($entryExists) {
+            [void](Invoke-McpClientCommand -Command $codex.Source -Arguments @(
+                'mcp', 'remove', $serverName
+            ) -Label 'Codex MCP replacement')
         }
-        & $codex.Source mcp add $serverName -- @bridgeCommand
-        if ($LASTEXITCODE -ne 0) { throw 'Could not add Maya MCP to Codex.' }
+        [void](Invoke-McpClientCommand -Command $codex.Source -Arguments (@(
+            'mcp', 'add', $serverName, '--'
+        ) + $bridgeCommand) -Label 'Codex MCP registration')
         $configured += 'Codex'
     } else {
         $unavailable += 'Codex'
@@ -52,9 +82,12 @@ if (-not $SkipCodex) {
 if (-not $SkipClaudeCode) {
     $claude = Get-Command claude -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($claude) {
-        & $claude.Source mcp remove --scope user $serverName *> $null
-        & $claude.Source mcp add --transport stdio --scope user $serverName -- @bridgeCommand
-        if ($LASTEXITCODE -ne 0) { throw 'Could not add Maya MCP to Claude Code.' }
+        [void](Invoke-McpClientCommand -Command $claude.Source -Arguments @(
+            'mcp', 'remove', '--scope', 'user', $serverName
+        ) -Label 'Claude Code MCP replacement' -AllowFailure)
+        [void](Invoke-McpClientCommand -Command $claude.Source -Arguments (@(
+            'mcp', 'add', '--transport', 'stdio', '--scope', 'user', $serverName, '--'
+        ) + $bridgeCommand) -Label 'Claude Code MCP registration')
         $configured += 'Claude Code'
     } else {
         $unavailable += 'Claude Code'

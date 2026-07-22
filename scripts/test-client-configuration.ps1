@@ -12,7 +12,14 @@ try {
     $shim = @'
 @echo off
 echo %~n0 %*>>"%MAYA_MCP_CLIENT_TEST_LOG%"
-if /I "%~n0"=="codex" if /I "%2"=="get" exit /b 1
+if /I "%~n0"=="codex" if /I "%2"=="get" (
+  1>&2 echo Error: No MCP server named maya-mcp found.
+  exit /b 1
+)
+if /I "%~n0"=="claude" if /I "%2"=="remove" (
+  1>&2 echo No MCP server named maya-mcp.
+  exit /b 1
+)
 exit /b 0
 '@
     Set-Content -LiteralPath (Join-Path $shimRoot 'codex.cmd') -Value $shim -Encoding ASCII
