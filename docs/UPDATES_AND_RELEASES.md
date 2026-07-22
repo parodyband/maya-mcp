@@ -42,13 +42,25 @@ support claim beyond build compatibility.
 
 - one ZIP for Maya 2026.3;
 - one ZIP for Maya 2027;
+- one Windows MCP Bundle for Claude Desktop;
 - `release-manifest.json`, containing target, API version, byte size, and SHA-256.
 
 Each ZIP includes a versioned module folder, a Maya-qualified `.mod` file, package
-metadata, a double-click `Install-MayaMcp.cmd`, and its PowerShell implementation.
-The installer uses Autodesk's per-user module layout, needs no administrator
-access, and configures autoload when the matching Maya installation is present.
-Extracting both ZIPs into the same Maya module directory is safe.
+metadata, a native stdio bridge, a Claude Desktop bundle, a double-click
+`Install-MayaMcp.cmd`, and its PowerShell implementation. The installer uses
+Autodesk's per-user module layout, needs no administrator access, configures
+autoload, and registers detected Codex and Claude Code clients. Extracting both
+ZIPs into the same Maya module directory is safe.
+
+The Claude asset follows the current
+[MCP Bundle manifest specification](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md)
+and is validated with the official `@anthropic-ai/mcpb` CLI before publication.
+
+The CMD launcher is self-bootstrapping. When Windows Explorer extracts only the
+launcher from an unopened ZIP, it downloads the exact tagged package, compares
+GitHub and manifest sizes and SHA-256 digests, validates archive paths, and runs
+the extracted PowerShell installer. A fully extracted package installs without a
+second download.
 
 After packaging, exercise the public ZIP contents and both installer launchers:
 
@@ -70,7 +82,7 @@ tree or an unpushed commit.
 ~~~
 
 The script rebuilds both targets and creates `vVERSION` with both ZIPs and the
-release manifest through GitHub CLI.
+Claude Desktop MCP Bundle, plus the release manifest through GitHub CLI.
 
 ## Updater trust and lifecycle
 
@@ -84,10 +96,14 @@ The Maya-side updater:
 6. rejects encrypted files, symbolic links, path traversal, and oversized archives;
 7. verifies the ZIP SHA-256 and its internal package metadata;
 8. installs to a new versioned folder and atomically replaces only that Maya
-   version's module descriptor.
+   version's module descriptor;
+9. registers the matching native stdio bridge behind the same stable client
+   launcher used by Codex and Claude Code.
 
 The updater never overwrites the DLL loaded by Maya. A restart activates the new
 descriptor. Older version folders remain available for rollback.
+Client configuration does not point into those versioned folders and does not
+need to change during an update.
 
 Set `MAYA_MCP_DISABLE_UPDATE_CHECK=1` before launching Maya to disable the daily
 check. The manual **Check for Updates...** menu action remains available.

@@ -2,7 +2,8 @@
 param(
     [string]$ModulesDirectory = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya\modules'),
     [string]$MayaLocation = '',
-    [switch]$AllowMayaRunning
+    [switch]$AllowMayaRunning,
+    [switch]$SkipClientConfiguration
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +62,56 @@ if (Test-Path -LiteralPath $legacyModule) {
 if (-not $MayaLocation) { $MayaLocation = "C:\Program Files\Autodesk\Maya$major" }
 $mayapy = Join-Path $MayaLocation 'bin\mayapy.exe'
 $installedPlugin = Join-Path $installedFolder 'plug-ins\maya_mcp.mll'
+$installedBridge = Join-Path $installedFolder 'bin\maya-mcp-bridge.exe'
+$installedLauncher = Join-Path $installedFolder 'client\Start-MayaMcpBridge.ps1'
+$installedConfigurator = Join-Path $installedFolder 'client\Configure-MayaMcpClients.ps1'
+foreach ($required in @($installedBridge, $installedLauncher, $installedConfigurator)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+        throw "The installed Maya MCP package is missing $required."
+    }
+}
+
+$clientRoot = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA 'MayaMCP\client'
+} else {
+    Join-Path ([System.IO.Path]::GetTempPath()) 'MayaMCP\client'
+}
+$bridgeVersionRoot = Join-Path $clientRoot "versions\$version"
+New-Item -ItemType Directory -Force -Path $bridgeVersionRoot | Out-Null
+$bridgeDigest = (Get-FileHash -LiteralPath $installedBridge -Algorithm SHA256).Hash.ToLowerInvariant()
+$registeredBridge = Join-Path $bridgeVersionRoot "maya-mcp-bridge-$($bridgeDigest.Substring(0, 16)).exe"
+if (-not (Test-Path -LiteralPath $registeredBridge -PathType Leaf)) {
+    Copy-Item -LiteralPath $installedBridge -Destination $registeredBridge
+}
+$stableLauncher = Join-Path $clientRoot 'Start-MayaMcpBridge.ps1'
+Copy-Item -LiteralPath $installedLauncher -Destination $stableLauncher -Force
+Copy-Item -LiteralPath $installedConfigurator -Destination (Join-Path $clientRoot 'Configure-MayaMcpClients.ps1') -Force
+
+$registryPath = Join-Path $clientRoot 'bridge-installations.json'
+$records = @()
+if (Test-Path -LiteralPath $registryPath -PathType Leaf) {
+    try {
+        $existingRegistry = Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json
+        if ([int]$existingRegistry.schema_version -eq 1) {
+            $records = @($existingRegistry.installations | Where-Object { [string]$_.version -ne $version })
+        }
+    } catch {
+        Write-Warning 'Replacing an unreadable Maya MCP client bridge registry.'
+    }
+}
+$records += [ordered]@{
+    version = $version
+    path = $registeredBridge
+    installed_at = [DateTime]::UtcNow.ToString('o')
+}
+$registry = [ordered]@{ schema_version = 1; installations = $records }
+$temporaryRegistry = Join-Path $clientRoot ".bridge-installations.json.tmp-$PID"
+[System.IO.File]::WriteAllText(
+    $temporaryRegistry,
+    ($registry | ConvertTo-Json -Depth 6) + "`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+Move-Item -LiteralPath $temporaryRegistry -Destination $registryPath -Force
 if (Test-Path -LiteralPath $mayapy) {
     $previousModulePath = $env:MAYA_MODULE_PATH
     try {
@@ -80,4 +131,16 @@ if (Test-Path -LiteralPath $mayapy) {
 
 Write-Host "Maya MCP $version for Maya $target is installed." -ForegroundColor Green
 Write-Host "Installed for this Windows user at $installedFolder"
+if (-not $SkipClientConfiguration -and $env:MAYA_MCP_INSTALLER_SKIP_CLIENT_CONFIGURATION -ne '1') {
+    try {
+        & $installedConfigurator -LauncherPath $stableLauncher
+    } catch {
+        Write-Warning "The Maya plug-in is installed, but automatic AI client configuration failed: $($_.Exception.Message)"
+        Write-Warning 'Open Maya MCP > Configure AI Clients after checking that Codex or Claude Code is installed.'
+    }
+}
+$claudeDesktopBundle = Join-Path $releaseRoot 'Install-MayaMcp-Claude-Desktop.mcpb'
+if (Test-Path -LiteralPath $claudeDesktopBundle -PathType Leaf) {
+    Write-Host 'Claude Desktop: double-click Install-MayaMcp-Claude-Desktop.mcpb in this package, then approve the extension.'
+}
 Write-Host 'Open Maya. Future compatible releases are available from Maya MCP > Check for Updates.'

@@ -38,7 +38,7 @@ if packaged_scripts not in runtime_path.parents:
 status = json.loads(cmds.mayaMcpStatus())
 if not status["running"]:
     fail(f"Maya MCP did not start: {status}")
-if status["version"] != "0.5.1":
+if status["version"] != "0.5.2":
     fail(f"Unexpected Maya MCP version: {status['version']}")
 
 with open(status["discoveryFile"], "r", encoding="utf-8") as stream:

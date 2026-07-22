@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(maya_mcp VERSION 0.5.1 LANGUAGES CXX)
+project(maya_mcp VERSION 0.5.2 LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -62,6 +62,20 @@ add_library(maya_mcp MODULE
     src/python_bridge.cpp
     src/vp2_capture_command.cpp
 )
+
+add_executable(maya_mcp_bridge src/stdio_bridge.cpp)
+target_compile_features(maya_mcp_bridge PRIVATE cxx_std_17)
+target_compile_definitions(maya_mcp_bridge PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    _CRT_SECURE_NO_WARNINGS
+    MAYA_MCP_VERSION="${PROJECT_VERSION}"
+)
+target_link_libraries(maya_mcp_bridge PRIVATE
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    ws2_32
+)
 target_compile_features(maya_mcp PRIVATE cxx_std_17)
 target_compile_definitions(maya_mcp PRIVATE NT_PLUGIN REQUIRE_IOSTREAM _BOOL _CRT_SECURE_NO_WARNINGS _HAS_ITERATOR_DEBUGGING=0)
 target_compile_definitions(maya_mcp PRIVATE
@@ -90,16 +104,22 @@ target_link_libraries(maya_mcp PRIVATE
 if(MSVC)
     target_compile_options(maya_mcp PRIVATE /W4 /permissive- /Zc:__cplusplus /wd4100 /wd4996)
     set_property(TARGET maya_mcp PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    target_compile_options(maya_mcp_bridge PRIVATE /W4 /permissive- /Zc:__cplusplus /wd4100 /wd4996)
+    set_property(TARGET maya_mcp_bridge PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 endif()
 
 set_target_properties(maya_mcp PROPERTIES PREFIX "" SUFFIX ".mll" OUTPUT_NAME "maya_mcp"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/maya-mcp/plug-ins"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/maya-mcp/plug-ins")
+set_target_properties(maya_mcp_bridge PROPERTIES OUTPUT_NAME "maya-mcp-bridge"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/maya-mcp/bin")
 foreach(config Debug Release RelWithDebInfo MinSizeRel)
     string(TOUPPER "${config}" config_upper)
     set_target_properties(maya_mcp PROPERTIES
         "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${CMAKE_BINARY_DIR}/package/maya-mcp/plug-ins"
         "LIBRARY_OUTPUT_DIRECTORY_${config_upper}" "${CMAKE_BINARY_DIR}/package/maya-mcp/plug-ins")
+    set_target_properties(maya_mcp_bridge PROPERTIES
+        "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${CMAKE_BINARY_DIR}/package/maya-mcp/bin")
 endforeach()
 
 configure_file(cmake/maya-mcp.mod.in "${CMAKE_BINARY_DIR}/package/maya-mcp.mod" @ONLY)
@@ -108,14 +128,31 @@ file(GLOB_RECURSE MAYA_MCP_RUNTIME_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/python/maya_mcp_runtime/*.py")
 add_custom_target(maya_mcp_runtime_package ALL
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/package/maya-mcp/scripts"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/package/maya-mcp/client"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/python/maya_mcp_runtime"
         "${CMAKE_BINARY_DIR}/package/maya-mcp/scripts/maya_mcp_runtime"
-    DEPENDS maya_mcp ${MAYA_MCP_RUNTIME_SOURCES}
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/start-client-bridge.ps1"
+        "${CMAKE_BINARY_DIR}/package/maya-mcp/client/Start-MayaMcpBridge.ps1"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/configure-clients.ps1"
+        "${CMAKE_BINARY_DIR}/package/maya-mcp/client/Configure-MayaMcpClients.ps1"
+    DEPENDS maya_mcp maya_mcp_bridge ${MAYA_MCP_RUNTIME_SOURCES}
+        scripts/start-client-bridge.ps1 scripts/configure-clients.ps1
     COMMENT "Packaging Maya MCP Python runtime"
 )
 install(TARGETS maya_mcp RUNTIME DESTINATION maya-mcp/plug-ins LIBRARY DESTINATION maya-mcp/plug-ins)
+install(TARGETS maya_mcp_bridge RUNTIME DESTINATION maya-mcp/bin)
 install(DIRECTORY python/maya_mcp_runtime DESTINATION maya-mcp/scripts)
+install(FILES
+    scripts/start-client-bridge.ps1
+    DESTINATION maya-mcp/client
+    RENAME Start-MayaMcpBridge.ps1)
+install(FILES
+    scripts/configure-clients.ps1
+    DESTINATION maya-mcp/client
+    RENAME Configure-MayaMcpClients.ps1)
 install(FILES
     "${CMAKE_BINARY_DIR}/package/maya-mcp.mod"
     "${CMAKE_BINARY_DIR}/package/package-manifest.json"

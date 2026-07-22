@@ -12,6 +12,9 @@ SHA-256-verified updates.
 ## What works
 
 - MCP 2025-11-25 over Streamable HTTP at http://127.0.0.1:7001/mcp
+- A native stdio bridge that discovers the active Maya process on every launch
+- Automatic user-scope setup for Codex and Claude Code
+- A one-click Claude Desktop MCP Bundle (`.mcpb`)
 - Cryptographic bearer tokens, strict loopback binding, and Origin validation
 - Session initialization, ping, tools, resources, prompts, and session deletion
 - A bounded C++ worker pool with removable Maya-timer and Qt-playback dispatch
@@ -46,13 +49,21 @@ You do not need Visual Studio, CMake, or an Autodesk devkit to install a release
 1. Close Maya.
 2. Download the matching ZIP from [GitHub Releases](https://github.com/parodyband/maya-mcp/releases/latest):
    `maya2026.3` for Maya 2026.3 or `maya2027` for Maya 2027.1.
-3. Right-click the ZIP, choose **Extract All**, and open the extracted folder.
-4. Double-click **Install-MayaMcp.cmd**.
-5. Wait for the green installed message, press any key, and open Maya.
+3. Open the ZIP and double-click **Install-MayaMcp.cmd**.
+4. Wait for the green installed message, press any key, and open Maya.
+5. Restart Codex or Claude Code if it was already open.
 
 That is the entire install. It does not require administrator access and does not
 change the machine-wide PowerShell policy. The installer copies only the matching
-binary into your user Maya modules folder and configures it to load automatically.
+Maya package into your user modules folder, enables autoload, and configures any
+detected Codex or Claude Code installation. If Windows opens only the launcher
+from inside the ZIP, the launcher downloads and verifies the exact complete
+package automatically. Choosing **Extract All** first is optional and avoids that
+second download.
+
+For Claude Desktop, double-click **Install-MayaMcp-Claude-Desktop.mcpb** in the
+same package and approve the extension. [Anthropic's current extension flow](https://support.anthropic.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
+keeps Claude Desktop setup separate from Claude Code setup.
 
 For terminal-based or managed installs, the equivalent command is:
 
@@ -72,6 +83,8 @@ only when its `MAYA_API_VERSION` exactly matches the running Maya process. Choos
 An accepted update is downloaded over HTTPS, verified against both the release
 manifest and GitHub's SHA-256 asset digest, and installed side-by-side. The loaded
 DLL is never overwritten. Close and reopen Maya to activate the staged version.
+The update also registers the matching stdio bridge. Codex and Claude Code keep
+using the same stable launcher, so their MCP configuration does not change.
 
 Disable automatic checks while keeping the manual menu command available:
 
@@ -140,7 +153,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.1"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.2"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -152,7 +165,8 @@ Validate the real GPU viewport in a separate, isolated Maya process:
 Evidence is written below `build\viewport-validation\`. The launcher never
 attaches to or closes a Maya process that it did not start.
 
-Create the two public release ZIPs plus `release-manifest.json`:
+Create the two public release ZIPs, the Claude Desktop MCP Bundle, and
+`release-manifest.json`:
 
 ~~~powershell
 .\scripts\package-release.ps1
@@ -186,6 +200,25 @@ The configured build packages are outside the repository working tree:
 
 ## Connect an MCP client
 
+The release installer configures detected Codex and Claude Code clients for your
+Windows user. It creates one permanent `maya-mcp` entry that launches a local
+stdio bridge. The bridge reads the active Maya process, port, and token at
+connection time, so Maya restarts and plug-in updates do not require editing the
+client configuration.
+
+To add a client installed after Maya MCP, or repair its configuration, choose:
+
+**Maya MCP > Configure AI Clients...**
+
+Restart the AI client after configuration. Open Maya before starting a session
+that needs Maya tools.
+
+Claude Desktop uses the separate **Install-MayaMcp-Claude-Desktop.mcpb** file.
+Install it from Claude Desktop's extension settings if double-click is not
+registered on your machine.
+
+### Advanced direct HTTP connection
+
 The plug-in writes per-process discovery data to:
 
 ~~~text
@@ -201,7 +234,8 @@ Inspect the connection without printing the full token:
 .\scripts\show-connection.ps1
 ~~~
 
-Reveal the token only when configuring a trusted client:
+Reveal the token only when configuring a trusted client that cannot launch the
+included stdio bridge:
 
 ~~~powershell
 .\scripts\show-connection.ps1 -RevealToken -AsJson
