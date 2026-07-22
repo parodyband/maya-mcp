@@ -1,0 +1,112 @@
+"""Small, local-only Maya UI for server and session capability controls."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Any
+
+import maya.cmds as cmds
+
+_MENU = "mayaMcpMenu"
+_SCRIPT_ITEM = "mayaMcpAllowScriptsMenuItem"
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def script_execution_enabled() -> bool:
+    return os.getenv("MAYA_MCP_ALLOW_UNSAFE_CODE", "").lower() in _TRUE_VALUES
+
+
+def _set_script_execution(enabled: bool) -> None:
+    os.environ["MAYA_MCP_ALLOW_UNSAFE_CODE"] = "1" if enabled else "0"
+    if cmds.menuItem(_SCRIPT_ITEM, exists=True):
+        cmds.menuItem(_SCRIPT_ITEM, edit=True, checkBox=enabled)
+    state = "enabled" if enabled else "disabled"
+    cmds.inViewMessage(
+        assistMessage=f"Maya MCP Python/MEL automation {state} for this session",
+        position="topCenter",
+        fade=True,
+    )
+    cmds.warning(
+        "Maya MCP: Python/MEL automation is "
+        f"{state} for this Maya session. It runs with your full user privileges."
+    )
+
+
+def _toggle_script_execution(*args: Any) -> None:
+    enabled = bool(args[0]) if args else not script_execution_enabled()
+    _set_script_execution(enabled)
+
+
+def _show_status(*_: Any) -> None:
+    status = json.loads(cmds.mayaMcpStatus())
+    message = (
+        f"Maya MCP {status.get('version', '?')}\n"
+        f"Build: Maya {status.get('mayaTarget', '?')} "
+        f"(API {status.get('mayaApiVersion', '?')})\n"
+        f"Running: {status.get('running', False)}\n"
+        f"Endpoint: {status.get('endpoint', '')}\n"
+        "Python/MEL: "
+        + ("allowed this session" if script_execution_enabled() else "blocked")
+    )
+    cmds.confirmDialog(title="Maya MCP Status", message=message, button=["OK"])
+
+
+def _start_server(*_: Any) -> None:
+    cmds.mayaMcpStart()
+    _show_status()
+
+
+def _stop_server(*_: Any) -> None:
+    cmds.mayaMcpStop()
+    cmds.inViewMessage(
+        assistMessage="Maya MCP server stopped",
+        position="topCenter",
+        fade=True,
+    )
+
+
+def _check_for_updates(*_: Any) -> None:
+    from . import updater
+
+    updater.check_for_updates(manual=True)
+
+
+def install_menu() -> None:
+    if cmds.about(batch=True):
+        return
+    remove_menu()
+    menu = cmds.menu(_MENU, label="Maya MCP", parent="MayaWindow", tearOff=True)
+    cmds.menuItem(label="Server Status...", parent=menu, command=_show_status)
+    cmds.menuItem(divider=True, parent=menu)
+    cmds.menuItem(
+        _SCRIPT_ITEM,
+        label="Allow Python/MEL Automation This Session",
+        annotation=(
+            "Allow the authenticated local MCP client to execute Python or MEL "
+            "with your full Maya user privileges until Maya closes"
+        ),
+        parent=menu,
+        checkBox=script_execution_enabled(),
+        command=_toggle_script_execution,
+    )
+    cmds.menuItem(divider=True, parent=menu)
+    cmds.menuItem(label="Start / Refresh Server", parent=menu, command=_start_server)
+    cmds.menuItem(label="Stop Server", parent=menu, command=_stop_server)
+    cmds.menuItem(divider=True, parent=menu)
+    cmds.menuItem(label="Check for Updates...", parent=menu, command=_check_for_updates)
+    if os.getenv("MAYA_MCP_DISABLE_UPDATE_CHECK", "").lower() not in _TRUE_VALUES:
+        from . import updater
+
+        updater.start_auto_check()
+
+
+def remove_menu() -> None:
+    updater_module = sys.modules.get("maya_mcp_runtime.updater")
+    if updater_module is not None:
+        updater_module.shutdown()
+    if cmds.about(batch=True):
+        return
+    if cmds.menu(_MENU, exists=True):
+        cmds.deleteUI(_MENU, menu=True)

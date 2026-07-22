@@ -17,7 +17,10 @@ public:
     [[nodiscard]] Json readResource(const std::string& uri) const;
 
 private:
-    [[nodiscard]] Json callEncoded(const char* functionName, const Json& payload) const;
+    [[nodiscard]] Json callEncoded(
+        const char* functionName,
+        const Json& payload,
+        bool undoEnabled) const;
     Json catalog_ = Json::object();
 };
 

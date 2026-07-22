@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import maya.standalone
 
@@ -21,10 +23,22 @@ def fail(message: str) -> None:
 
 
 cmds.loadPlugin("maya_mcp")
+import maya_mcp_runtime
+
+plugin_path = Path(
+    cmds.pluginInfo("maya_mcp", query=True, path=True)
+).resolve()
+packaged_scripts = (plugin_path.parent.parent / "scripts").resolve()
+runtime_path = Path(maya_mcp_runtime.__file__).resolve()
+if packaged_scripts not in runtime_path.parents:
+    fail(
+        "Maya MCP imported runtime code outside the built package: "
+        f"{runtime_path} (expected below {packaged_scripts})"
+    )
 status = json.loads(cmds.mayaMcpStatus())
 if not status["running"]:
     fail(f"Maya MCP did not start: {status}")
-if status["version"] != "0.2.0":
+if status["version"] != "0.5.0":
     fail(f"Unexpected Maya MCP version: {status['version']}")
 
 with open(status["discoveryFile"], "r", encoding="utf-8") as stream:
@@ -145,6 +159,8 @@ required_tools = {
     "maya.scene.query",
     "maya.node.apply",
     "maya.viewport.capture",
+    "maya.viewport.scene_map",
+    "maya.rig.preview",
     "maya.rig.skeleton",
     "maya.script.execute",
 }
@@ -249,6 +265,89 @@ call_tool(
         ),
     },
 )
+
+failed_script = call_tool(
+    27,
+    "maya.script.execute",
+    {
+        "language": "python",
+        "undo": "chunk",
+        "label": "Maya MCP failing script probe",
+        "source": (
+            "cmds.createNode('transform', name='partialScriptMutation')\n"
+            "raise RuntimeError('intentional script failure')\n"
+        ),
+    },
+    expect_error_code="SCRIPT_ERROR",
+)
+if not cmds.objExists("partialScriptMutation"):
+    fail("The failing-script probe did not exercise a partial scene mutation")
+if (
+    failed_script["revisions"]["scene_after"]
+    <= failed_script["revisions"]["scene_before"]
+):
+    fail("A failing script did not advance the conservative scene revision")
+if not any(
+    warning["code"] == "PARTIAL_SCRIPT_MUTATION_POSSIBLE"
+    for warning in failed_script["warnings"]
+):
+    fail("A failing script did not report possible partial mutation")
+# The native bridge must opt into Maya undo even when a batch test manually
+# pumps the queue through a non-undoable MPxCommand.
+if failed_script["undo"] != {
+    "available": True,
+    "label": "Maya MCP failing script probe",
+}:
+    fail(f"The manually pumped script hid its recovery chunk: {failed_script}")
+cmds.undo()
+if cmds.objExists("partialScriptMutation"):
+    fail("The manually pumped failing-script chunk did not undo its mutation")
+
+# Native tool dispatch explicitly opts into Maya undo recording and must
+# preserve a real recovery chunk for a failing script.
+from maya_mcp_runtime.dispatcher import dispatch_base64
+
+direct_payload = {
+    "name": "maya.script.execute",
+    "arguments": {
+        "language": "python",
+        "undo": "chunk",
+        "label": "Maya MCP direct failing script probe",
+        "source": (
+            "cmds.createNode('transform', name='directPartialScriptMutation')\n"
+            "raise RuntimeError('intentional direct script failure')\n"
+        ),
+    },
+}
+direct_encoded = base64.b64encode(
+    json.dumps(direct_payload).encode("utf-8")
+).decode("ascii")
+direct_failure = json.loads(dispatch_base64(direct_encoded))["structuredContent"]
+if direct_failure["error"]["code"] != "SCRIPT_ERROR":
+    fail(f"Direct failing script returned the wrong error: {direct_failure}")
+if direct_failure["undo"] != {
+    "available": True,
+    "label": "Maya MCP direct failing script probe",
+}:
+    fail(f"Direct failing script hid its recovery chunk: {direct_failure}")
+cmds.undo()
+if cmds.objExists("directPartialScriptMutation"):
+    fail("The direct failing-script recovery chunk did not undo its mutation")
+
+bounded_script = call_tool(
+    28,
+    "maya.script.execute",
+    {
+        "language": "python",
+        "source": "print('x' * 400000)\nresult = list(range(10000))",
+    },
+)
+if len(bounded_script["data"]["stdout"]) > 262144:
+    fail("Script stdout exceeded its retained-output budget")
+if not bounded_script["data"]["output_truncated"]:
+    fail("Script stdout truncation was not reported")
+if not bounded_script["data"]["result_truncated"]:
+    fail("Large script result truncation was not reported")
 os.environ.pop("MAYA_MCP_ALLOW_UNSAFE_CODE", None)
 if not json.loads(cmds.mayaMcpStatus())["running"]:
     fail("A nested script call was able to stop the MCP server")
@@ -333,6 +432,40 @@ mesh_result = call_tool(
     },
 )
 mesh = mesh_result["data"]["transform"]
+mesh_component = dict(mesh)
+mesh_component["component"] = f"{mesh['long_name']}.f[0:5]"
+call_tool(
+    60,
+    "maya.node.apply",
+    {"operations": [{"op": "delete", "node": mesh_component}]},
+    expect_error_code="INVALID_ARGUMENT",
+)
+if not cmds.objExists(mesh["long_name"]):
+    fail("A node-only operation widened a face selector and deleted its mesh")
+component_selection = call_tool(
+    61,
+    "maya.selection.set",
+    {"mode": "replace", "items": [mesh_component]},
+)
+if component_selection["data"]["returned"] != 1:
+    fail(f"Compact component selection was not preserved: {component_selection}")
+if not component_selection["data"]["selection"][0].get("component"):
+    fail("Component selection did not return a canonical component reference")
+material_result = call_tool(
+    62,
+    "maya.material.apply",
+    {
+        "action": "create_assign",
+        "name": "mayaMcpSmokeMaterial",
+        "shader_type": "lambert",
+        "targets": [mesh_component],
+        "base_color": [0.2, 0.4, 0.8],
+    },
+)
+assigned_targets = material_result["changes"][-1]["targets"]
+if not assigned_targets[0].get("component"):
+    fail("Material assignment widened its component result to the whole mesh")
+call_tool(63, "maya.selection.set", {"mode": "clear"})
 skeleton_result = call_tool(
     15,
     "maya.rig.skeleton",
@@ -391,6 +524,20 @@ call_tool(
             {"op": "delete", "node": {"node_id": mesh["node_id"]}},
             {"op": "delete", "node": {"node_id": joints[0]["node_id"]}},
             {"op": "delete", "node": {"node_id": control_group["node_id"]}},
+            {
+                "op": "delete",
+                "node": {
+                    "node_id": material_result["data"]["shading_groups"][0][
+                        "node_id"
+                    ]
+                },
+            },
+            {
+                "op": "delete",
+                "node": {
+                    "node_id": material_result["data"]["material"]["node_id"]
+                },
+            },
         ],
     },
 )

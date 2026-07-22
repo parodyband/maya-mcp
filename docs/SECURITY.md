@@ -19,15 +19,22 @@ machine.
 - Tokens use 256 bits from Windows BCryptGenRandom unless explicitly supplied.
 - Session IDs use 192 random bits and are not treated as authentication.
 - Browser Origin values must resolve to localhost, 127.0.0.1, or ::1.
-- HTTP payloads are capped at 8 MiB.
+- HTTP request payloads are capped at 8 MiB.
+- Every serialized tool or resource result has a final 16 MiB native-bridge
+  ceiling; typed tools apply tighter field and work limits before invoking Maya.
 - The HTTP worker pool has four workers and a 64-request queue.
 - The Maya dispatcher has a 256-request queue.
 - Sessions expire after two idle hours and are capped at 128 per Maya process.
 - Tool arguments pass strict schemas before execution.
-- Query result counts, script size, capture size, and script output are bounded.
+- Query result counts, projection arrays, script size, capture response size,
+  and script output are bounded.
+- Color capture is capped at 2,048 pixels per axis and 8 MiB of base64; native
+  depth is capped at 1,024 pixels on its largest sampled axis and 4 MiB base64.
+- Rig previews are capped at 16 active records and 8,192 owned nodes.
 - Tokens are not returned by the Maya status command.
 - Discovery files live below the user's LocalAppData directory.
-- Unsafe Python and MEL are disabled by default.
+- Python and MEL are disabled by default and can be approved from Maya's local
+  UI for only the current process.
 
 These controls follow MCP's requirements to validate Origin, bind local servers
 to loopback, and authenticate connections.
@@ -49,6 +56,14 @@ Recommended practice:
 - Stop the server when it is not needed.
 - Use a different Windows account for untrusted software.
 
+## Release updater
+
+The updater is the only built-in outbound network client. It contacts the fixed
+public repository `parodyband/maya-mcp` over HTTPS at most once every 24 hours,
+or when the user chooses **Check for Updates...**. Downloads are exact-Maya-API,
+size-bounded, SHA-256-verified, and installed side-by-side. Set
+`MAYA_MCP_DISABLE_UPDATE_CHECK=1` to disable automatic checks.
+
 ## Python and MEL
 
 maya.script.execute is full host code execution. It can:
@@ -62,7 +77,12 @@ maya.script.execute is full host code execution. It can:
 AST inspection would be advisory, not a sandbox. The only honest control is to
 leave the tool disabled or grant it to a trusted client.
 
-Enable it only for one Maya launch:
+For a trusted client, enable it without restarting from:
+
+**Maya MCP > Allow Python/MEL Automation This Session**
+
+The checkbox changes only the current Maya process and shows a full-privilege
+warning. Headless sessions may instead opt in before launch:
 
 ~~~powershell
 $env:MAYA_MCP_ALLOW_UNSAFE_CODE = '1'
@@ -77,13 +97,26 @@ A complete append-only audit log is planned.
 | Class | Examples | Default behavior |
 |---|---|---|
 | Read | context, query, viewport capture | Enabled |
+| Transient scene write | rig preview create/update/cancel | Direct API, bounded, ownership-checked, and non-serializing |
 | Scene write | node apply, geometry, animation, rig | Enabled and undo-chunked |
 | Destructive | delete, unbind, open scene | Requires explicit action fields |
 | File access | save, import, reference, export | Explicit paths and actions |
-| Host execution | Python and MEL | Disabled unless environment opt-in |
+| Host execution | Python and MEL | Disabled unless explicitly approved in Maya or by environment opt-in |
 
 MCP annotations describe risk to clients, but server-side checks remain the
 authority.
+
+Rig-preview cleanup resolves every UUID, verifies ownership tags, rejects
+foreign descendants, and verifies deletion before dropping tracking. Preview
+nodes are marked `doNotWrite`, so they are excluded from Maya scene
+serialization. The implementation does not globally disable undo or hide a
+third-party callback's dirty state. Acceptance separately preflights permanent
+output names and targets, requires undo to be enabled, and uses one normal Maya
+undo chunk.
+
+Viewport color and depth can reveal scene content. They use the same bearer
+permission as other tools and never write captures to a user-selected path.
+Interactive test evidence is written only below the ignored `build` tree.
 
 ## Known security limits
 

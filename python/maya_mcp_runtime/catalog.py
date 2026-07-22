@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from typing import Any
 
 JSON_SCHEMA = "https://json-schema.org/draft/2020-12/schema"
@@ -90,35 +91,125 @@ NODE_SELECTOR = {
         {
             "type": "object",
             "properties": {
-                "node_id": {"type": "string"},
-                "scene_epoch": {"type": "string"},
+                "node_id": {"type": "string", "minLength": 1},
+                "scene_epoch": {
+                    "type": "string",
+                    "pattern": r"^[0-9a-f]{32}$",
+                },
                 "uuid": {"type": "string"},
                 "reference_node": {
                     "oneOf": [{"type": "string"}, {"type": "null"}]
                 },
-                "dag_path": {"type": "string"},
-                "name": {"type": "string"},
-                "long_name": {"type": "string"},
+                "dag_path": {"type": "string", "minLength": 1},
+                "name": {"type": "string", "minLength": 1},
+                "long_name": {"type": "string", "minLength": 1},
                 "type": {"type": "string"},
                 "dag_paths": {
                     "type": "array",
                     "items": {"type": "string"},
+                    "minItems": 1,
                 },
+                "dag_paths_truncated": {"type": "boolean"},
+                "dag_path_limit": {"type": "integer", "minimum": 1},
+                "instanced": {"type": "boolean"},
                 "referenced": {"type": "boolean"},
                 "locked": {"type": "boolean"},
                 "component": {"type": "string"},
             },
             "additionalProperties": False,
-            "minProperties": 1,
+            "anyOf": [
+                {"required": ["node_id"]},
+                {"required": ["dag_path"]},
+                {"required": ["long_name"]},
+                {"required": ["dag_paths"]},
+                {"required": ["name"]},
+            ],
         },
     ]
 }
+
+# Component-bearing references are accepted only by tools that explicitly
+# advertise component semantics. Node-only tools fail closed at runtime too.
+COMPONENT_SELECTOR = copy.deepcopy(NODE_SELECTOR)
+del NODE_SELECTOR["oneOf"][1]["properties"]["component"]
 
 VECTOR3 = {
     "type": "array",
     "items": {"type": "number"},
     "minItems": 3,
     "maxItems": 3,
+}
+
+RGB3 = {
+    "type": "array",
+    "items": {"type": "number", "minimum": 0, "maximum": 1},
+    "minItems": 3,
+    "maxItems": 3,
+}
+
+RIG_PREVIEW_HANDLE = {
+    "type": "object",
+    "properties": {
+        "preview_id": {
+            "type": "string",
+            "pattern": r"^rig-preview:[0-9a-f]{32}$",
+        },
+        "scene_epoch": {"type": "string", "pattern": r"^[0-9a-f]{32}$"},
+        "revision": {"type": "integer", "minimum": 1},
+    },
+    "required": ["preview_id", "scene_epoch", "revision"],
+    "additionalProperties": False,
+}
+
+RIG_PREVIEW_JOINT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "position": VECTOR3,
+        "parent_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "radius": {"type": "number", "exclusiveMinimum": 0},
+    },
+    "required": ["id", "position"],
+    "additionalProperties": False,
+}
+
+RIG_PREVIEW_CONTROL = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "offset_name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "constraint_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+        },
+        "target": NODE_SELECTOR,
+        "target_joint_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+        },
+        "position": VECTOR3,
+        "rotation": VECTOR3,
+        "parent_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "shape": {
+            "type": "string",
+            "enum": ["circle", "square", "cube"],
+            "default": "circle",
+        },
+        "size": {"type": "number", "exclusiveMinimum": 0, "default": 1},
+        "color": {"type": "integer", "minimum": 0, "maximum": 31},
+        "constraint": {
+            "type": "string",
+            "enum": ["none", "parent", "orient", "point"],
+            "default": "none",
+        },
+        "maintain_offset": {"type": "boolean", "default": True},
+    },
+    "required": ["id"],
+    "additionalProperties": False,
 }
 
 
@@ -174,8 +265,10 @@ TOOLS = [
         "maya.node.apply",
         "Apply Maya Node Operations",
         "Atomically create, duplicate, rename, delete, parent, transform, set "
-        "attributes, and connect nodes. Ordered steps can reference an earlier "
-        "result with '$stepId'. Use validate_only to resolve targets without edits.",
+        "attributes, connect nodes, and assemble production rigs with custom "
+        "controls, IK handles, pole vectors, constraints, and driven keys. "
+        "Ordered steps can reference an earlier result with '$stepId'. Use "
+        "validate_only to resolve targets without edits.",
         _object(
             {
                 "operations": {
@@ -199,6 +292,10 @@ TOOLS = [
                                     "add_attribute",
                                     "connect",
                                     "disconnect",
+                                    "create_control",
+                                    "create_ik_handle",
+                                    "create_constraint",
+                                    "set_driven_keys",
                                 ],
                             },
                             "node": NODE_SELECTOR,
@@ -225,6 +322,144 @@ TOOLS = [
                                 "default": "world",
                             },
                             "force": {"type": "boolean", "default": False},
+                            "shape": {
+                                "type": "string",
+                                "enum": [
+                                    "circle",
+                                    "square",
+                                    "cube",
+                                    "diamond",
+                                    "arrow",
+                                    "custom",
+                                ],
+                                "default": "circle",
+                            },
+                            "size": {
+                                "type": "number",
+                                "exclusiveMinimum": 0,
+                                "maximum": 1000000,
+                                "default": 1,
+                            },
+                            "points": {
+                                "type": "array",
+                                "items": VECTOR3,
+                                "minItems": 2,
+                                "maxItems": 1000,
+                            },
+                            "degree": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 7,
+                                "default": 1,
+                            },
+                            "closed": {"type": "boolean", "default": False},
+                            "normal": VECTOR3,
+                            "color": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 31,
+                            },
+                            "color_rgb": RGB3,
+                            "line_width": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 10,
+                            },
+                            "start_joint": NODE_SELECTOR,
+                            "end_joint": NODE_SELECTOR,
+                            "solver": {
+                                "type": "string",
+                                "enum": [
+                                    "ikRPsolver",
+                                    "ikSCsolver",
+                                    "ikSplineSolver",
+                                    "ikSpringSolver",
+                                ],
+                                "default": "ikRPsolver",
+                            },
+                            "curve": NODE_SELECTOR,
+                            "create_curve": {
+                                "type": "boolean",
+                                "default": True,
+                            },
+                            "drivers": {
+                                "type": "array",
+                                "items": NODE_SELECTOR,
+                                "minItems": 1,
+                                "maxItems": 16,
+                            },
+                            "driven": NODE_SELECTOR,
+                            "constraint_type": {
+                                "type": "string",
+                                "enum": [
+                                    "parent",
+                                    "orient",
+                                    "point",
+                                    "scale",
+                                    "aim",
+                                    "pole_vector",
+                                ],
+                            },
+                            "maintain_offset": {
+                                "type": "boolean",
+                                "default": True,
+                            },
+                            "aim_vector": VECTOR3,
+                            "up_vector": VECTOR3,
+                            "world_up_type": {
+                                "type": "string",
+                                "enum": [
+                                    "scene",
+                                    "object",
+                                    "objectrotation",
+                                    "vector",
+                                    "none",
+                                ],
+                            },
+                            "world_up_object": NODE_SELECTOR,
+                            "skip_translate": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["x", "y", "z"]},
+                                "uniqueItems": True,
+                                "maxItems": 3,
+                            },
+                            "skip_rotate": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["x", "y", "z"]},
+                                "uniqueItems": True,
+                                "maxItems": 3,
+                            },
+                            "driver_plug": {"type": "string", "minLength": 3},
+                            "driven_plug": {"type": "string", "minLength": 3},
+                            "driven_keys": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "driver_value": {"type": "number"},
+                                        "value": {"type": "number"},
+                                        "in_tangent": {"type": "string"},
+                                        "out_tangent": {"type": "string"},
+                                    },
+                                    "required": ["driver_value", "value"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "nice_name": {"type": "string", "maxLength": 128},
+                            "enum_names": {
+                                "type": "array",
+                                "items": {"type": "string", "maxLength": 64},
+                                "minItems": 1,
+                                "maxItems": 128,
+                            },
+                            "min_value": {"type": "number"},
+                            "max_value": {"type": "number"},
+                            "default_value": {},
+                            "keyable": {"type": "boolean"},
+                            "channel_box": {"type": "boolean"},
+                            "locked": {"type": "boolean"},
                         },
                         "required": ["op"],
                         "additionalProperties": False,
@@ -245,7 +480,11 @@ TOOLS = [
         "Replace, add, remove, toggle, or clear the object/component selection.",
         _object(
             {
-                "items": {"type": "array", "items": NODE_SELECTOR},
+                "items": {
+                    "type": "array",
+                    "items": COMPONENT_SELECTOR,
+                    "maxItems": 500,
+                },
                 "mode": {
                     "type": "string",
                     "enum": ["replace", "add", "remove", "toggle", "clear"],
@@ -287,15 +526,24 @@ TOOLS = [
                     "type": "string",
                     "enum": ["cube", "sphere", "cylinder", "cone", "plane", "torus", "curve"],
                 },
-                "name": {"type": "string"},
+                "name": {"type": "string", "maxLength": 128},
                 "position": VECTOR3,
                 "rotation": VECTOR3,
                 "scale": VECTOR3,
                 "dimensions": {
                     "type": "object",
-                    "additionalProperties": {"type": "number"},
+                    "properties": {
+                        "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000},
+                        "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000},
+                        "depth": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000},
+                        "radius": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000},
+                        "section_radius": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000},
+                        "subdivisions_x": {"type": "integer", "minimum": 1, "maximum": 512},
+                        "subdivisions_y": {"type": "integer", "minimum": 1, "maximum": 512},
+                    },
+                    "additionalProperties": False,
                 },
-                "points": {"type": "array", "items": VECTOR3, "minItems": 2},
+                "points": {"type": "array", "items": VECTOR3, "minItems": 2, "maxItems": 10000},
                 "degree": {"type": "integer", "minimum": 1, "maximum": 7, "default": 1},
                 "construction_history": {"type": "boolean", "default": True},
             },
@@ -312,7 +560,7 @@ TOOLS = [
             {
                 "action": {"type": "string", "enum": ["create_assign", "assign", "inspect"]},
                 "material": NODE_SELECTOR,
-                "targets": {"type": "array", "items": NODE_SELECTOR},
+                "targets": {"type": "array", "items": COMPONENT_SELECTOR, "maxItems": 1000},
                 "name": {"type": "string"},
                 "shader_type": {
                     "type": "string",
@@ -340,10 +588,11 @@ TOOLS = [
         _object(
             {
                 "action": {"type": "string", "enum": ["set_keys", "delete_keys", "inspect"]},
-                "targets": {"type": "array", "items": NODE_SELECTOR},
-                "attributes": {"type": "array", "items": {"type": "string"}},
+                "targets": {"type": "array", "items": NODE_SELECTOR, "maxItems": 250},
+                "attributes": {"type": "array", "items": {"type": "string", "maxLength": 256}, "maxItems": 64},
                 "keys": {
                     "type": "array",
+                    "maxItems": 2000,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -379,6 +628,7 @@ TOOLS = [
                 "joints": {
                     "type": "array",
                     "minItems": 1,
+                    "maxItems": 500,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -407,7 +657,7 @@ TOOLS = [
         _object(
             {
                 "action": {"type": "string", "enum": ["create", "inspect"]},
-                "targets": {"type": "array", "items": NODE_SELECTOR},
+                "targets": {"type": "array", "items": NODE_SELECTOR, "maxItems": 500},
                 "shape": {"type": "string", "enum": ["circle", "square", "cube"], "default": "circle"},
                 "size": {"type": "number", "exclusiveMinimum": 0, "default": 1},
                 "color": {"type": "integer", "minimum": 0, "maximum": 31},
@@ -421,6 +671,69 @@ TOOLS = [
         read_only=False,
     ),
     _tool(
+        "maya.rig.preview",
+        "Preview and Accept Rig Placement",
+        "Create, revise, inspect, list, accept, or cancel vision-friendly joint "
+        "and control placement previews. Preview nodes are doNotWrite and stay "
+        "outside Maya undo, but live nodes may mark the scene dirty. Accept "
+        "preflights names and commits one named undo chunk.",
+        _object(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "create",
+                        "update",
+                        "query",
+                        "list",
+                        "accept",
+                        "cancel",
+                    ],
+                },
+                "handle": RIG_PREVIEW_HANDLE,
+                "name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "joints": {
+                    "type": "array",
+                    "items": RIG_PREVIEW_JOINT,
+                    "maxItems": 500,
+                },
+                "controls": {
+                    "type": "array",
+                    "items": RIG_PREVIEW_CONTROL,
+                    "maxItems": 500,
+                },
+                "parent": NODE_SELECTOR,
+                "orient": {"type": "boolean", "default": True},
+                "primary_axis": {
+                    "type": "string",
+                    "enum": ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"],
+                    "default": "xyz",
+                },
+                "secondary_axis": {
+                    "type": "string",
+                    "enum": [
+                        "xup",
+                        "xdown",
+                        "yup",
+                        "ydown",
+                        "zup",
+                        "zdown",
+                    ],
+                    "default": "yup",
+                },
+                "joint_color": RGB3,
+                "bone_color": RGB3,
+                "control_color": RGB3,
+                "if_scene_revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                },
+            },
+            ["action"],
+        ),
+        read_only=False,
+    ),
+    _tool(
         "maya.rig.skin",
         "Bind or Inspect Skin",
         "Bind geometry to joint influences with explicit weighting options, or "
@@ -428,8 +741,8 @@ TOOLS = [
         _object(
             {
                 "action": {"type": "string", "enum": ["bind", "inspect", "unbind"]},
-                "geometry": {"type": "array", "items": NODE_SELECTOR},
-                "influences": {"type": "array", "items": NODE_SELECTOR},
+                "geometry": {"type": "array", "items": NODE_SELECTOR, "maxItems": 100},
+                "influences": {"type": "array", "items": NODE_SELECTOR, "maxItems": 500},
                 "max_influences": {"type": "integer", "minimum": 1, "maximum": 32, "default": 4},
                 "dropoff_rate": {"type": "number", "minimum": 0.1, "maximum": 10, "default": 4},
                 "normalize": {"type": "boolean", "default": True},
@@ -442,14 +755,63 @@ TOOLS = [
     _tool(
         "maya.viewport.capture",
         "Capture Maya Viewport",
-        "Capture the active Viewport 2.0 image as MCP ImageContent and return "
-        "camera, matrices, resolution, time, selection, and projected joints.",
+        "Capture the active Viewport 2.0 color image as MCP ImageContent and "
+        "return camera, matrices, resolution, time, selection, and projected "
+        "joints. Optional experimental VP2 depth is bounded raw data with "
+        "renderer-native row metadata and is not yet pixel-correlated to color; "
+        "object-ID capture is not yet supported. Width and height are capped at "
+        "2048 pixels and encoded color output at 8 MiB.",
+        _object(
+            {
+                "width": {"type": "integer", "minimum": 64, "maximum": 2048},
+                "height": {"type": "integer", "minimum": 64, "maximum": 2048},
+                "format": {"type": "string", "enum": ["png", "jpg"], "default": "png"},
+                "include_joint_projections": {"type": "boolean", "default": True},
+                "include_depth": {"type": "boolean", "default": False},
+                "depth_max_dimension": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 1024,
+                    "default": 512,
+                },
+            }
+        ),
+        read_only=True,
+        idempotent=True,
+    ),
+    _tool(
+        "maya.viewport.scene_map",
+        "Map Scene Objects into the Viewport",
+        "Return conservative projected world-AABB boxes, canonical Maya node "
+        "references, and pivots for viewport grounding. This does not test "
+        "occlusion or produce segmentation masks.",
         _object(
             {
                 "width": {"type": "integer", "minimum": 64, "maximum": 4096},
                 "height": {"type": "integer", "minimum": 64, "maximum": 4096},
-                "format": {"type": "string", "enum": ["png", "jpg"], "default": "png"},
-                "include_joint_projections": {"type": "boolean", "default": True},
+                "nodes": {
+                    "type": "array",
+                    "items": NODE_SELECTOR,
+                    "maxItems": 500,
+                },
+                "node_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 32,
+                },
+                "include_hidden": {"type": "boolean", "default": False},
+                "max_nodes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "default": 250,
+                },
+                "max_candidates": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5000,
+                    "default": 1000,
+                },
             }
         ),
         read_only=True,
@@ -462,10 +824,19 @@ TOOLS = [
         "coordinates, or return world rays for screen pixels.",
         _object(
             {
-                "world_points": {"type": "array", "items": VECTOR3},
-                "nodes": {"type": "array", "items": NODE_SELECTOR},
+                "world_points": {
+                    "type": "array",
+                    "items": VECTOR3,
+                    "maxItems": 1000,
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": NODE_SELECTOR,
+                    "maxItems": 500,
+                },
                 "screen_points": {
                     "type": "array",
+                    "maxItems": 1000,
                     "items": {
                         "type": "array",
                         "items": {"type": "number"},
@@ -481,8 +852,9 @@ TOOLS = [
     _tool(
         "maya.viewport.pick",
         "Pick Viewport Pixel",
-        "Pick the Maya node or component under a viewport pixel while preserving "
-        "the user's selection, and return the corresponding world ray.",
+        "Pick the Maya node or component under a viewport pixel and return the "
+        "corresponding world ray. Maya selection is restored, but selection "
+        "callbacks run during the temporary pick.",
         _object(
             {
                 "x": {"type": "integer", "minimum": 0},
@@ -491,7 +863,7 @@ TOOLS = [
             },
             ["x", "y"],
         ),
-        read_only=True,
+        read_only=False,
     ),
     _tool(
         "maya.file.apply",
@@ -518,7 +890,8 @@ TOOLS = [
         "Execute Python or MEL",
         "Unsafe escape hatch for capabilities not yet represented by typed tools. "
         "Runs with the user's full Maya privileges, is not sandboxed or safely "
-        "interruptible, and requires MAYA_MCP_ALLOW_UNSAFE_CODE=1.",
+        "interruptible, and requires explicit per-session approval from Maya's "
+        "Maya MCP menu or MAYA_MCP_ALLOW_UNSAFE_CODE=1.",
         _object(
             {
                 "language": {"type": "string", "enum": ["python", "mel"]},
@@ -550,14 +923,14 @@ PROMPTS = [
         "title": "Inspect the Maya Viewport",
         "description": "Visually inspect the current viewport and correlate it with scene structure.",
         "arguments": [{"name": "goal", "description": "What to inspect or diagnose.", "required": True}],
-        "_message": "Inspect Maya for this goal: {{goal}}. First read maya://context and maya://scene/summary. Capture the viewport, correlate visible evidence with canonical nodes, and report uncertainty before making edits.",
+        "_message": "Inspect Maya for this goal: {{goal}}. First read maya://context and maya://scene/summary. Call maya.viewport.capture with include_depth=true, then maya.viewport.scene_map at the same resolution. Ground color with projected boxes and canonical nodes; treat depth row orientation as experimental, confirm ambiguous overlaps with maya.viewport.pick, and report uncertainty before making edits.",
     },
     {
         "name": "maya.rig.from_landmarks",
         "title": "Build a Rig from Visual Landmarks",
         "description": "Plan and build a joint/control setup from visible landmarks.",
         "arguments": [{"name": "goal", "description": "Rig type and desired behavior.", "required": True}],
-        "_message": "Build this rig: {{goal}}. Inspect the mesh and existing rig, capture useful views, project or pick landmarks, create a small joint chain first, verify visually, then add controls and skin. Keep edits undoable and use explicit names.",
+        "_message": "Build this rig: {{goal}}. Inspect the mesh and existing rig, capture useful views with depth, and ground landmarks with maya.viewport.scene_map plus maya.viewport.pick. Create the proposed joints and controls with maya.rig.preview, review and update the transient preview visually, then call accept with the latest handle and scene revision only after the layout is approved. Skin only after acceptance; keep permanent edits undoable and use explicit names.",
     },
     {
         "name": "maya.scene.audit",

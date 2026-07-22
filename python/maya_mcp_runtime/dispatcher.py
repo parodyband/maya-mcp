@@ -14,14 +14,64 @@ from . import state
 from .catalog import CATALOG
 from .tools_core import CORE_HANDLERS
 from .tools_domain import DOMAIN_HANDLERS
+from .tools_rig_preview import RIG_PREVIEW_HANDLERS
+from .tools_vision import VISION_HANDLERS
 from .tools_viewport import VIEWPORT_HANDLERS
 
 HANDLERS = {
     **CORE_HANDLERS,
     **DOMAIN_HANDLERS,
+    **RIG_PREVIEW_HANDLERS,
+    **VISION_HANDLERS,
     **VIEWPORT_HANDLERS,
 }
 TOOL_DEFINITIONS = {tool["name"]: tool for tool in CATALOG["tools"]}
+_PUMP_INTERVAL_MS = 10
+_pump_timer: Any | None = None
+
+
+def _pump_native_queue() -> None:
+    try:
+        cmds.mayaMcpPump()
+    except RuntimeError:
+        # The timer is stopped during normal plug-in teardown. Avoid leaking a
+        # Python exception if Maya is already shutting down the command layer.
+        pass
+
+
+def install_pump_timer() -> None:
+    """Keep native MCP dispatch responsive while Maya is playing or rendering."""
+    global _pump_timer
+    remove_pump_timer()
+    if cmds.about(batch=True):
+        return
+    try:
+        from PySide6 import QtCore
+    except ImportError:
+        from PySide2 import QtCore
+
+    timer = QtCore.QTimer()
+    timer.setInterval(_PUMP_INTERVAL_MS)
+    try:
+        timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
+    except AttributeError:
+        timer.setTimerType(QtCore.Qt.PreciseTimer)
+    timer.timeout.connect(_pump_native_queue)
+    timer.start()
+    _pump_timer = timer
+
+
+def remove_pump_timer() -> None:
+    global _pump_timer
+    timer = _pump_timer
+    _pump_timer = None
+    if timer is None:
+        return
+    timer.stop()
+    try:
+        timer.timeout.disconnect(_pump_native_queue)
+    except (RuntimeError, TypeError):
+        pass
 
 
 def _type_matches(value: Any, expected: str) -> bool:
@@ -72,6 +122,21 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
             "INVALID_ARGUMENT",
             f"{path} must be {expected}, got {type(value).__name__}",
         )
+    if "anyOf" in schema:
+        errors = []
+        matches = 0
+        for option in schema["anyOf"]:
+            try:
+                _validate(value, option, path)
+                matches += 1
+            except state.ToolError as error:
+                errors.append(str(error))
+        if matches == 0:
+            raise state.ToolError(
+                "INVALID_ARGUMENT",
+                f"{path} must match at least one allowed shape",
+                {"errors": errors},
+            )
     if isinstance(value, dict):
         properties = schema.get("properties", {})
         missing = [key for key in schema.get("required", []) if key not in value]
@@ -174,10 +239,11 @@ def read_resource_base64(encoded: str) -> str:
     elif uri == "maya://scene/summary":
         data = _scene_summary()
     elif uri == "maya://selection":
+        selection = state.selection_snapshot()
         data = {
             "scene_epoch": state.scene_epoch(),
             "context_revision": state.context_revision(),
-            "selection": state.selection_refs(),
+            **selection,
         }
     elif uri == "maya://timeline":
         context = state.maya_context()

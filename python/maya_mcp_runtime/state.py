@@ -10,7 +10,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
@@ -22,6 +22,8 @@ _context_revision = 0
 _node_registry: dict[str, dict[str, Any]] = {}
 _last_scene_signature: tuple[Any, ...] | None = None
 _callback_ids: list[int] = []
+_lifecycle_cleanup_hooks: list[Callable[[str], None]] = []
+SELECTION_RESULT_LIMIT = 500
 
 
 class ToolError(RuntimeError):
@@ -119,7 +121,30 @@ def install_callbacks() -> None:
     )
 
 
+def register_lifecycle_cleanup(callback: Callable[[str], None]) -> None:
+    """Register an idempotent transient-state cleanup callback.
+
+    Runtime tool modules use this hook to discard scene-bound state before the
+    scene epoch changes and when the plug-in shuts down. Registrations persist
+    across plug-in reloads because Maya can retain imported Python modules.
+    """
+
+    if callback not in _lifecycle_cleanup_hooks:
+        _lifecycle_cleanup_hooks.append(callback)
+
+
+def _run_lifecycle_cleanup(reason: str) -> None:
+    for callback in tuple(_lifecycle_cleanup_hooks):
+        try:
+            callback(reason)
+        except Exception:
+            # A transient helper must never prevent a scene reset or plug-in
+            # teardown. Individual tools surface cleanup failures while active.
+            pass
+
+
 def shutdown_callbacks() -> None:
+    _run_lifecycle_cleanup("plugin_shutdown")
     while _callback_ids:
         callback_id = _callback_ids.pop()
         try:
@@ -130,6 +155,7 @@ def shutdown_callbacks() -> None:
 
 def reset_scene_epoch() -> str:
     global _scene_epoch, _scene_revision, _context_revision, _last_scene_signature
+    _run_lifecycle_cleanup("scene_reset")
     _scene_epoch = uuid.uuid4().hex
     _scene_revision = 0
     _context_revision = 0
@@ -143,6 +169,38 @@ def bump_scene_revision() -> int:
     _scene_revision += 1
     _last_scene_signature = _capture_scene_signature()
     return _scene_revision
+
+
+@contextlib.contextmanager
+def transient_scene_signature(expected_node_delta: int) -> Iterator[None]:
+    """Acknowledge preview-only node-count changes without hiding real edits.
+
+    Preview DAG/DG nodes change Maya's dirty bit and the node-count element of
+    the fallback signature. We acknowledge them only when the scene path and
+    undo/redo heads are unchanged and the exact expected node delta occurred.
+    A callback-created foreign node or undoable third-party edit therefore
+    remains visible to the next revision sync.
+    """
+
+    global _last_scene_signature
+    baseline = _capture_scene_signature()
+    try:
+        yield
+    finally:
+        try:
+            current = _capture_scene_signature()
+            external_state_unchanged = (
+                current[0] == baseline[0]
+                and current[2:4] == baseline[2:4]
+                and int(current[-1]) - int(baseline[-1])
+                == int(expected_node_delta)
+            )
+            if external_state_unchanged:
+                _last_scene_signature = current
+        except RuntimeError:
+            # Scene teardown can make status queries unavailable; a later call
+            # will conservatively observe a signature change.
+            pass
 
 
 def bump_context_revision() -> int:
@@ -298,12 +356,23 @@ def failure(
     }
 
 
-def _node_identity_data(node: str) -> tuple[str, str | None, list[str]]:
+def _node_identity_data(node: str) -> tuple[str, str | None, list[str], bool]:
     names = cmds.ls(node, long=True, objectsOnly=True) or []
     if not names:
         raise ToolError("TARGET_NOT_FOUND", f"Maya node does not exist: {node}")
     long_name = names[0]
-    dag_paths = cmds.ls(long_name, long=True, allPaths=True) or [long_name]
+    # Never enumerate every instance path into a tool response. The selected
+    # path plus UUID/reference identity is sufficient for stable resolution.
+    dag_paths = [long_name]
+    instanced = False
+    try:
+        selection = om.MSelectionList()
+        selection.add(long_name)
+        dependency = selection.getDependNode(0)
+        if dependency.hasFn(om.MFn.kDagNode):
+            instanced = bool(selection.getDagPath(0).isInstanced())
+    except (RuntimeError, TypeError):
+        pass
     uuids = cmds.ls(long_name, uuid=True) or [""]
     reference_node: str | None = None
     try:
@@ -316,16 +385,15 @@ def _node_identity_data(node: str) -> tuple[str, str | None, list[str]]:
             "epoch": _scene_epoch,
             "uuid": uuids[0],
             "reference": reference_node,
-            "paths": sorted(dag_paths),
         },
         sort_keys=True,
     )
     opaque = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
-    return f"node:{_scene_epoch}:{opaque}", reference_node, dag_paths
+    return f"node:{_scene_epoch}:{opaque}", reference_node, dag_paths, instanced
 
 
 def node_ref(node: str) -> dict[str, Any]:
-    node_id, reference_node, dag_paths = _node_identity_data(node)
+    node_id, reference_node, dag_paths, instanced = _node_identity_data(node)
     long_name = (cmds.ls(node, long=True, objectsOnly=True) or [node])[0]
     uuid_values = cmds.ls(long_name, uuid=True) or [""]
     locked = bool((cmds.lockNode(long_name, query=True, lock=True) or [False])[0])
@@ -338,6 +406,9 @@ def node_ref(node: str) -> dict[str, Any]:
         "long_name": long_name,
         "type": cmds.nodeType(long_name),
         "dag_paths": dag_paths,
+        "dag_paths_truncated": instanced,
+        "dag_path_limit": 1,
+        "instanced": instanced,
         "referenced": reference_node is not None,
         "locked": locked,
     }
@@ -396,15 +467,86 @@ def _resolve_registered(node_id: str) -> str:
     )
 
 
+def _validate_registered_claims(
+    selector: dict[str, Any], node_id: str, resolved: str
+) -> None:
+    """Reject canonical references whose visible identity claims disagree."""
+
+    reference = _node_registry[node_id]
+    conflicts: dict[str, Any] = {}
+    for field in ("uuid", "reference_node"):
+        if field in selector and selector[field] != reference[field]:
+            conflicts[field] = {
+                "claimed": selector[field],
+                "registered": reference[field],
+            }
+
+    if "type" in selector:
+        current_type = cmds.nodeType(resolved)
+        if selector["type"] != current_type:
+            conflicts["type"] = {
+                "claimed": selector["type"],
+                "current": current_type,
+            }
+
+    claimed_paths = [
+        selector.get("dag_path"),
+        selector.get("long_name"),
+        selector.get("name"),
+        *(selector.get("dag_paths") or []),
+    ]
+    for claim in (value for value in claimed_paths if isinstance(value, str) and value):
+        matches = cmds.ls(claim, long=True, objectsOnly=True) or []
+        if not matches:
+            # A stable node_id may legitimately survive a rename.
+            continue
+        match_uuids = {
+            values[0]
+            for match in matches
+            if (values := (cmds.ls(match, uuid=True) or []))
+        }
+        if reference["uuid"] not in match_uuids:
+            conflicts.setdefault("paths", []).append(
+                {"claimed": claim, "resolved_matches": matches[:20]}
+            )
+
+    if conflicts:
+        raise ToolError(
+            "NODE_REFERENCE_CONFLICT",
+            "The canonical node reference contains contradictory identity claims",
+            {
+                "node_id": node_id,
+                "resolved": resolved,
+                "conflicts": conflicts,
+            },
+        )
+
+
+def _component_target_error(selector: Any) -> ToolError:
+    return ToolError(
+        "COMPONENT_TARGET_REQUIRES_EXPLICIT_TOOL",
+        "This operation requires a Maya node and will not widen a component "
+        "selector to its owning node",
+        {"selector": json_safe(selector)},
+    )
+
+
 def resolve_node(selector: Any) -> str:
+    """Resolve a node-only selector, rejecting components and plugs."""
+
     if isinstance(selector, dict):
+        if selector.get("component") is not None:
+            raise _component_target_error(selector)
         if selector.get("scene_epoch") not in (None, _scene_epoch):
             raise ToolError(
                 "SCENE_EPOCH_MISMATCH",
                 "The node reference belongs to a different Maya scene epoch",
             )
         if selector.get("node_id"):
-            return _resolve_registered(str(selector["node_id"]))
+            node_id = str(selector["node_id"])
+            resolved = _resolve_registered(node_id)
+            _validate_registered_claims(selector, node_id, resolved)
+            return resolved
         selector = (
             selector.get("dag_path")
             or selector.get("long_name")
@@ -415,6 +557,8 @@ def resolve_node(selector: Any) -> str:
         raise ToolError("INVALID_TARGET", "A non-empty Maya node selector is required")
     if selector.startswith("node:"):
         return _resolve_registered(selector)
+    if "." in selector:
+        raise _component_target_error(selector)
     matches = cmds.ls(selector, long=True) or []
     if not matches:
         raise ToolError("TARGET_NOT_FOUND", f"Maya target does not exist: {selector}")
@@ -428,16 +572,105 @@ def resolve_node(selector: Any) -> str:
     return unique[0]
 
 
-def selection_refs() -> list[dict[str, Any]]:
+def resolve_selection_item(selector: Any) -> str:
+    """Resolve an object selector while preserving a canonical component suffix."""
+
+    if isinstance(selector, str):
+        if "." not in selector:
+            return resolve_node(selector)
+        return _resolve_component(selector)
+
+    if not isinstance(selector, dict) or selector.get("component") is None:
+        return resolve_node(selector)
+    component = selector["component"]
+    if not isinstance(component, str) or "." not in component:
+        raise ToolError(
+            "INVALID_TARGET",
+            "A canonical component selector must contain a component suffix",
+        )
+    base_selector = dict(selector)
+    base_selector.pop("component", None)
+    node = resolve_node(base_selector)
+    claimed_base, suffix = component.split(".", 1)
+    if not claimed_base or not suffix:
+        raise ToolError("INVALID_TARGET", f"Invalid Maya component: {component}")
+    claimed_matches = cmds.ls(claimed_base, long=True, objectsOnly=True) or []
+    if claimed_matches:
+        node_uuid = (cmds.ls(node, uuid=True) or [""])[0]
+        claimed_uuids = {
+            values[0]
+            for match in claimed_matches
+            if (values := (cmds.ls(match, uuid=True) or []))
+        }
+        if node_uuid not in claimed_uuids:
+            raise ToolError(
+                "NODE_REFERENCE_CONFLICT",
+                "The component path belongs to a different Maya node",
+                {"component": component, "resolved_node": node},
+            )
+    return _resolve_component(f"{node}.{suffix}")
+
+
+def _resolve_component(candidate: str) -> str:
+    """Resolve one compact Maya component expression, never an attribute plug."""
+
+    try:
+        selection = om.MSelectionList()
+        selection.add(candidate)
+        _path, component_object = selection.getComponent(0)
+        if component_object.isNull():
+            raise RuntimeError("selector resolved without component data")
+    except RuntimeError as error:
+        raise ToolError(
+            "INVALID_TARGET",
+            f"Expected a Maya component selector, not a node attribute: {candidate}",
+        ) from error
+    matches = cmds.ls(candidate, long=True, flatten=False) or []
+    if not matches:
+        raise ToolError(
+            "TARGET_NOT_FOUND",
+            f"Maya component does not exist: {candidate}",
+        )
+    unique = list(dict.fromkeys(matches))
+    if len(unique) > 1:
+        raise ToolError(
+            "TARGET_AMBIGUOUS",
+            f"Maya component target is ambiguous: {candidate}",
+            {"candidates": unique[:50]},
+        )
+    return unique[0]
+
+
+def item_ref(item: str) -> dict[str, Any]:
+    """Return a canonical node or compact component reference."""
+
+    base = item.split(".", 1)[0]
+    reference = node_ref(base)
+    if "." in item:
+        reference = dict(reference)
+        reference["component"] = item
+    return reference
+
+
+def selection_snapshot(limit: int = SELECTION_RESULT_LIMIT) -> dict[str, Any]:
+    """Return compact canonical selection entries under a fixed output bound."""
+
+    items = cmds.ls(selection=True, long=True, flatten=False) or []
     references = []
-    for item in cmds.ls(selection=True, long=True, flatten=True) or []:
-        base = item.split(".", 1)[0]
-        reference = node_ref(base)
-        if "." in item:
-            reference = dict(reference)
-            reference["component"] = item
-        references.append(reference)
-    return references
+    for item in items[:limit]:
+        references.append(item_ref(item))
+    return {
+        "selection": references,
+        "entry_count": len(items),
+        "returned": len(references),
+        "truncated": len(items) > limit,
+        "limit": limit,
+        "components_compact": True,
+    }
+
+
+def selection_refs() -> list[dict[str, Any]]:
+    return selection_snapshot()["selection"]
 
 
 def safe_get_attr(plug: str) -> Any:
@@ -462,6 +695,7 @@ def maya_context() -> dict[str, Any]:
         renderer = cmds.getAttr("defaultRenderGlobals.currentRenderer")
     except RuntimeError:
         pass
+    selection = selection_snapshot()
     return {
         "maya": {
             "version": cmds.about(version=True),
@@ -489,7 +723,10 @@ def maya_context() -> dict[str, Any]:
             "animation_start": cmds.playbackOptions(query=True, animationStartTime=True),
             "animation_end": cmds.playbackOptions(query=True, animationEndTime=True),
         },
-        "selection": selection_refs(),
+        "selection": selection["selection"],
+        "selection_metadata": {
+            key: value for key, value in selection.items() if key != "selection"
+        },
         "viewport": {"panel": panel, "camera": camera},
         "renderer": renderer,
         "undo": {
@@ -524,6 +761,11 @@ def undo_chunk(
                     call.rolled_back = True
                 except RuntimeError:
                     pass
+            elif call.mutation_started and undo_enabled:
+                # The caller intentionally retained a possibly partial chunk.
+                # Keep its recovery path visible even though the body raised.
+                call.undo_available = True
+                call.undo_label = label
         raise
     finally:
         if opened:

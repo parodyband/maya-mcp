@@ -90,13 +90,35 @@ bool PythonBridge::initialize(std::string& error) {
         catalog_ = Json::object();
         return false;
     }
+    if (!MGlobal::executePythonCommand(
+            "from maya_mcp_runtime import ui as _maya_mcp_ui; "
+            "_maya_mcp_ui.install_menu()",
+            false,
+            false)) {
+        MGlobal::displayWarning(
+            "maya-mcp: server started, but the Maya MCP menu could not be installed");
+    }
+    status = MGlobal::executePythonCommand(
+        "from maya_mcp_runtime import dispatcher as _maya_mcp_dispatcher; "
+        "_maya_mcp_dispatcher.install_pump_timer()",
+        false,
+        false);
+    if (!status) {
+        error = "Could not install Maya MCP Qt dispatcher heartbeat: ";
+        error += status.errorString().asChar();
+        catalog_ = Json::object();
+        return false;
+    }
     return true;
 }
 
 void PythonBridge::shutdown() noexcept {
     try {
         MGlobal::executePythonCommand(
-            "from maya_mcp_runtime import state as _maya_mcp_state; "
+            "from maya_mcp_runtime import state as _maya_mcp_state, "
+            "ui as _maya_mcp_ui, dispatcher as _maya_mcp_dispatcher; "
+            "_maya_mcp_dispatcher.remove_pump_timer(); "
+            "_maya_mcp_ui.remove_menu(); "
             "_maya_mcp_state.shutdown_callbacks()",
             false,
             false);
@@ -108,15 +130,19 @@ void PythonBridge::shutdown() noexcept {
 PythonBridge::Json PythonBridge::callTool(
     const std::string& name, const Json& arguments) const {
     return callEncoded(
-        "dispatch_base64", Json{{"name", name}, {"arguments", arguments}});
+        "dispatch_base64",
+        Json{{"name", name}, {"arguments", arguments}},
+        true);
 }
 
 PythonBridge::Json PythonBridge::readResource(const std::string& uri) const {
-    return callEncoded("read_resource_base64", Json{{"uri", uri}});
+    return callEncoded("read_resource_base64", Json{{"uri", uri}}, false);
 }
 
 PythonBridge::Json PythonBridge::callEncoded(
-    const char* functionName, const Json& payload) const {
+    const char* functionName,
+    const Json& payload,
+    const bool undoEnabled) const {
     const std::string encoded = encodeBase64(payload.dump());
     const std::string command =
         "__import__('maya_mcp_runtime.dispatcher', "
@@ -125,7 +151,7 @@ PythonBridge::Json PythonBridge::callEncoded(
 
     MStatus status;
     const MString result = MGlobal::executePythonCommandStringResult(
-        command.c_str(), false, false, &status);
+        command.c_str(), false, undoEnabled, &status);
     if (!status) {
         throw std::runtime_error(
             std::string("Maya Python dispatch failed: ") +
