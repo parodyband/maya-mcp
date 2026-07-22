@@ -25,7 +25,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Could not make the repository public.' }
     }
     $head = git rev-parse HEAD
-    $localTagCommit = git rev-list -n 1 $tag 2>$null
+    $localTagCommit = ''
+    if ((git tag --list $tag) -eq $tag) {
+        $localTagCommit = git rev-list -n 1 $tag
+    }
     if ($localTagCommit) {
         if ($localTagCommit -ne $head) { throw "$tag already points at a different commit." }
     } else {
