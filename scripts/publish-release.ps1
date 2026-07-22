@@ -24,11 +24,24 @@ try {
         gh repo edit parodyband/maya-mcp --visibility public --accept-visibility-change-consequences
         if ($LASTEXITCODE -ne 0) { throw 'Could not make the repository public.' }
     }
+    $head = git rev-parse HEAD
+    $localTagCommit = git rev-list -n 1 $tag 2>$null
+    if ($localTagCommit) {
+        if ($localTagCommit -ne $head) { throw "$tag already points at a different commit." }
+    } else {
+        git tag -a $tag -m "Maya MCP $version" $head
+        if ($LASTEXITCODE -ne 0) { throw "Could not create $tag." }
+    }
+    git ls-remote --exit-code --tags origin "refs/tags/$tag" 1>$null 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        git push origin $tag
+        if ($LASTEXITCODE -ne 0) { throw "Could not push $tag over the authenticated Git remote." }
+    }
     $assets = @(
         Get-ChildItem -LiteralPath $dist -Filter '*.zip' -File | ForEach-Object FullName
         Join-Path $dist 'release-manifest.json'
     )
-    gh release create $tag @assets --repo parodyband/maya-mcp --target (git rev-parse HEAD) --title "Maya MCP $version" --generate-notes
+    gh release create $tag @assets --repo parodyband/maya-mcp --verify-tag --title "Maya MCP $version" --generate-notes
     if ($LASTEXITCODE -ne 0) { throw "Could not publish $tag." }
     gh release view $tag --repo parodyband/maya-mcp --json url,tagName,name,isDraft,isPrerelease
 } finally {
