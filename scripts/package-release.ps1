@@ -48,11 +48,18 @@ foreach ($target in @('2026.3', '2027')) {
     )
     Copy-Item -LiteralPath $packageManifestPath -Destination (Join-Path $staging 'package-manifest.json')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-release.ps1') -Destination (Join-Path $staging 'Install-MayaMcp.ps1')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-release.cmd') -Destination (Join-Path $staging 'Install-MayaMcp.cmd')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'configure-autoload.py') -Destination (Join-Path $staging 'configure-autoload.py')
+    Get-ChildItem -LiteralPath $staging -Directory -Filter '__pycache__' -Recurse |
+        Remove-Item -Recurse -Force
+    Get-ChildItem -LiteralPath $staging -File -Recurse |
+        Where-Object Extension -In @('.pyc', '.pyo') |
+        Remove-Item -Force
     Compress-Archive -LiteralPath (
         (Join-Path $staging $moduleFileName),
         (Join-Path $staging 'package-manifest.json'),
         (Join-Path $staging $folderName),
+        (Join-Path $staging 'Install-MayaMcp.cmd'),
         (Join-Path $staging 'Install-MayaMcp.ps1'),
         (Join-Path $staging 'configure-autoload.py')
     ) -DestinationPath $assetPath -CompressionLevel Optimal

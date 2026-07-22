@@ -1,10 +1,16 @@
 [CmdletBinding()]
 param(
     [string]$ModulesDirectory = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya\modules'),
-    [string]$MayaLocation = ''
+    [string]$MayaLocation = '',
+    [switch]$AllowMayaRunning
 )
 
 $ErrorActionPreference = 'Stop'
+$runningMaya = @(Get-Process -Name 'maya' -ErrorAction SilentlyContinue)
+if ($runningMaya.Count -and -not $AllowMayaRunning) {
+    throw 'Close all Autodesk Maya windows, then double-click Install-MayaMcp.cmd again.'
+}
+
 $releaseRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $manifestPath = Join-Path $releaseRoot 'package-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath)) {
@@ -21,6 +27,11 @@ $sourceModule = Join-Path $releaseRoot $moduleFileName
 if (-not (Test-Path -LiteralPath (Join-Path $sourceFolder 'plug-ins\maya_mcp.mll'))) {
     throw "The Maya $target plug-in package is incomplete."
 }
+if (-not (Test-Path -LiteralPath $sourceModule)) {
+    throw "The Maya $target module descriptor is missing. Extract the entire ZIP, then try again."
+}
+
+Write-Host "Installing Maya MCP $version for Maya $target..." -ForegroundColor Cyan
 
 New-Item -ItemType Directory -Force -Path $ModulesDirectory | Out-Null
 $installedFolder = Join-Path $ModulesDirectory $folderName
@@ -68,4 +79,5 @@ if (Test-Path -LiteralPath $mayapy) {
 }
 
 Write-Host "Maya MCP $version for Maya $target is installed." -ForegroundColor Green
-Write-Host 'Close and reopen Maya. Future compatible releases are available from Maya MCP > Check for Updates.'
+Write-Host "Installed for this Windows user at $installedFolder"
+Write-Host 'Open Maya. Future compatible releases are available from Maya MCP > Check for Updates.'

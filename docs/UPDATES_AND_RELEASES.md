@@ -45,8 +45,16 @@ support claim beyond build compatibility.
 - `release-manifest.json`, containing target, API version, byte size, and SHA-256.
 
 Each ZIP includes a versioned module folder, a Maya-qualified `.mod` file, package
-metadata, and `Install-MayaMcp.ps1`. Extracting both ZIPs into the same Maya module
-directory is safe.
+metadata, a double-click `Install-MayaMcp.cmd`, and its PowerShell implementation.
+The installer uses Autodesk's per-user module layout, needs no administrator
+access, and configures autoload when the matching Maya installation is present.
+Extracting both ZIPs into the same Maya module directory is safe.
+
+After packaging, exercise the public ZIP contents and both installer launchers:
+
+~~~powershell
+.\scripts\test-release-installer.ps1
+~~~
 
 ## Publish
 

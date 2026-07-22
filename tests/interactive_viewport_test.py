@@ -1424,15 +1424,15 @@ def _start() -> None:
             f"{runtime_path} (expected below {packaged_scripts})",
         )
         _assert(
-            maya_mcp_runtime.__version__ == "0.5.0",
+            maya_mcp_runtime.__version__ == "0.5.1",
             "Interactive gate imported the wrong Python runtime version: "
             f"{maya_mcp_runtime.__version__}",
         )
         status = json.loads(cmds.mayaMcpStatus())
         _assert(status.get("running") is True, f"Maya MCP did not start: {status}")
         _assert(
-            status.get("version") == "0.5.0",
-            f"Interactive gate expected Maya MCP 0.5.0, got {status.get('version')}",
+            status.get("version") == "0.5.1",
+            f"Interactive gate expected Maya MCP 0.5.1, got {status.get('version')}",
         )
         discovery_path = Path(status["discoveryFile"]).resolve()
         local_app_data = Path(os.environ["LOCALAPPDATA"]).resolve()
