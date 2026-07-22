@@ -98,7 +98,7 @@ Production sign-off still requires:
 - Progress and cooperative cancellation
 - MCP task support where stable clients implement it
 - Job compatibility tools for clients without tasks
-- Optional stdio adapter using a restricted local IPC channel
+- Cross-client stdio bridge hardening and automatic reconnection after Maya restarts
 - Multi-Maya instance broker and explicit instance selection
 - Official MCP conformance runner in CI
 - Interactive viewport harness in CI on a licensed GPU runner

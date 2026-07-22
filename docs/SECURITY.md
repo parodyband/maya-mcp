@@ -33,6 +33,8 @@ machine.
 - Rig previews are capped at 16 active records and 8,192 owned nodes.
 - Tokens are not returned by the Maya status command.
 - Discovery files live below the user's LocalAppData directory.
+- Client configurations contain only a stable local launcher path, never a
+  bearer token or fixed MCP port.
 - Python and MEL are disabled by default and can be approved from Maya's local
   UI for only the current process.
 
@@ -56,13 +58,20 @@ Recommended practice:
 - Stop the server when it is not needed.
 - Use a different Windows account for untrusted software.
 
-## Release updater
+## Release downloads
 
-The updater is the only built-in outbound network client. It contacts the fixed
-public repository `parodyband/maya-mcp` over HTTPS at most once every 24 hours,
-or when the user chooses **Check for Updates...**. Downloads are exact-Maya-API,
-size-bounded, SHA-256-verified, and installed side-by-side. Set
+The release updater and direct-from-ZIP installer bootstrap are the only Maya MCP
+components that contact an external host. Both use the fixed public repository
+`parodyband/maya-mcp` over HTTPS and validate the exact release identity, size,
+and SHA-256. The updater checks at most once every 24 hours, or when the user
+chooses **Check for Updates...**. Downloads are exact-Maya-API, size-bounded,
+SHA-256-verified, and installed side-by-side. Set
 `MAYA_MCP_DISABLE_UPDATE_CHECK=1` to disable automatic checks.
+
+The stdio bridge makes only loopback HTTP requests. It rejects non-loopback
+discovery URLs, control characters in authentication headers, invalid ports,
+oversized messages, and unsupported discovery schemas. Logs go to stderr so
+stdout remains MCP protocol data.
 
 ## Python and MEL
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import maya.cmds as cmds
@@ -73,6 +75,66 @@ def _check_for_updates(*_: Any) -> None:
     updater.check_for_updates(manual=True)
 
 
+def _configure_clients(*_: Any) -> None:
+    package_root = Path(__file__).resolve().parents[2]
+    configurator = package_root / "client" / "Configure-MayaMcpClients.ps1"
+    local_base = Path(os.getenv("LOCALAPPDATA") or os.getenv("TEMP") or str(Path.home()))
+    launcher = local_base / "MayaMCP" / "client" / "Start-MayaMcpBridge.ps1"
+    if not configurator.is_file() or not launcher.is_file():
+        cmds.confirmDialog(
+            title="Configure Maya MCP Clients",
+            message="Client setup files are missing. Run the latest Maya MCP installer again.",
+            button=["OK"],
+            icon="critical",
+        )
+        return
+
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(configurator),
+                "-LauncherPath",
+                str(launcher),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=flags,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        cmds.confirmDialog(
+            title="Configure Maya MCP Clients",
+            message=f"Could not start client configuration:\n{error}",
+            button=["OK"],
+            icon="critical",
+        )
+        return
+    details = (completed.stdout + "\n" + completed.stderr).strip()
+    if len(details) > 2000:
+        details = details[-2000:]
+    if completed.returncode == 0:
+        message = details or "Maya MCP client configuration is complete."
+        message += "\n\nRestart Codex or Claude Code if it is already open."
+        icon = "information"
+    else:
+        message = details or "Client configuration failed."
+        icon = "critical"
+    cmds.confirmDialog(
+        title="Configure Maya MCP Clients",
+        message=message,
+        button=["OK"],
+        icon=icon,
+    )
+
+
 def install_menu() -> None:
     if cmds.about(batch=True):
         return
@@ -95,6 +157,7 @@ def install_menu() -> None:
     cmds.menuItem(label="Start / Refresh Server", parent=menu, command=_start_server)
     cmds.menuItem(label="Stop Server", parent=menu, command=_stop_server)
     cmds.menuItem(divider=True, parent=menu)
+    cmds.menuItem(label="Configure AI Clients...", parent=menu, command=_configure_clients)
     cmds.menuItem(label="Check for Updates...", parent=menu, command=_check_for_updates)
     if os.getenv("MAYA_MCP_DISABLE_UPDATE_CHECK", "").lower() not in _TRUE_VALUES:
         from . import updater

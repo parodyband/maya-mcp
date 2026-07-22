@@ -1,0 +1,34 @@
+{
+  "manifest_version": "0.3",
+  "name": "maya-mcp",
+  "display_name": "Maya MCP",
+  "version": "__MAYA_MCP_VERSION__",
+  "description": "Connect Claude Desktop to the active Autodesk Maya MCP plug-in.",
+  "long_description": "Use Claude to inspect Maya scenes, capture and ground the viewport, build and revise rigs, edit animation and geometry, and call the typed Maya MCP toolset. Maya must be open with the Maya MCP plug-in loaded.",
+  "author": {
+    "name": "Maya MCP contributors",
+    "url": "https://github.com/parodyband/maya-mcp"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/parodyband/maya-mcp.git"
+  },
+  "homepage": "https://github.com/parodyband/maya-mcp",
+  "documentation": "https://github.com/parodyband/maya-mcp#readme",
+  "support": "https://github.com/parodyband/maya-mcp/issues",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/maya-mcp-bridge.exe",
+    "mcp_config": {
+      "command": "${__dirname}/server/maya-mcp-bridge.exe",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "keywords": ["maya", "autodesk", "3d", "rigging", "animation", "viewport"],
+  "compatibility": {
+    "platforms": ["win32"]
+  }
+}

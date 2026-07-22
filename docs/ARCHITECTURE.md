@@ -7,7 +7,8 @@ main-thread access to Maya APIs.
 
 ~~~mermaid
 flowchart LR
-    Client["MCP client"] -->|"HTTP POST + bearer token"| HTTP["C++ Streamable HTTP"]
+    Client["Codex or Claude"] -->|"stdio"| Stdio["Native discovery bridge"]
+    Stdio -->|"HTTP POST + bearer token"| HTTP["C++ Streamable HTTP"]
     HTTP --> Protocol["JSON-RPC and MCP router"]
     Protocol --> Queue["Bounded FIFO"]
     Queue -->|"Maya timer callback"| Bridge["C++ Python bridge"]
@@ -37,6 +38,7 @@ MCP lifecycle, then waits for a queued main-thread task.
 | src/plugin.cpp | Maya command registration, startup, shutdown, and ownership |
 | MainThreadDispatcher | Bounded FIFO drained by a removable Maya timer callback |
 | McpServer | Loopback HTTP, authentication, sessions, and MCP routing |
+| maya-mcp-bridge | Stdio framing, active-process discovery, and HTTP session forwarding |
 | PythonBridge | Base64 JSON boundary into Maya's bundled Python runtime |
 | Vp2CaptureCommand | Bounded VP2 render-target capture with retained callback ownership |
 | maya_mcp_runtime | Schemas, identities, undo policy, and typed Maya operations |
@@ -48,6 +50,13 @@ coverage without compiling one native command per Maya feature.
 Release packages are emitted per Maya API. The updater selects an exact API
 match, verifies GitHub and manifest digests, and atomically advances only the
 matching Maya-version module descriptor for the next process start.
+
+Codex and Claude Code launch a stable PowerShell entry point over stdio. It reads
+the active discovery version, chooses the matching side-by-side native bridge,
+and inherits the client's standard streams. The native bridge accepts only a
+`127.0.0.1` MCP URL, reads the per-process token without printing it, and forwards
+the negotiated MCP session header. Claude Desktop bundles the same bridge as a
+Windows MCP Bundle.
 
 Depth render-target capture already lives in C++. High-volume mesh data,
 additional Viewport 2.0 passes, native undo commands, and UFE support will move

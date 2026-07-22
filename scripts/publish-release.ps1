@@ -42,6 +42,7 @@ try {
     }
     $assets = @(
         Get-ChildItem -LiteralPath $dist -Filter '*.zip' -File | ForEach-Object FullName
+        Get-ChildItem -LiteralPath $dist -Filter '*.mcpb' -File | ForEach-Object FullName
         Join-Path $dist 'release-manifest.json'
     )
     gh release create $tag @assets --repo parodyband/maya-mcp --verify-tag --title "Maya MCP $version" --generate-notes

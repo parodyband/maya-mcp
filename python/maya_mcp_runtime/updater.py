@@ -276,8 +276,19 @@ def _package_metadata(staging: Path, update: dict[str, Any]) -> None:
     manifest_path = staging / "package-manifest.json"
     plugin_path = staging / folder_name / "plug-ins" / "maya_mcp.mll"
     runtime_path = staging / folder_name / "scripts" / "maya_mcp_runtime" / "__init__.py"
+    bridge_path = staging / folder_name / "bin" / "maya-mcp-bridge.exe"
+    launcher_path = staging / folder_name / "client" / "Start-MayaMcpBridge.ps1"
+    configurator_path = staging / folder_name / "client" / "Configure-MayaMcpClients.ps1"
     module_path = staging / module_name
-    for required in (manifest_path, plugin_path, runtime_path, module_path):
+    for required in (
+        manifest_path,
+        plugin_path,
+        runtime_path,
+        bridge_path,
+        launcher_path,
+        configurator_path,
+        module_path,
+    ):
         if not required.is_file():
             raise UpdateError(f"Update archive is missing {required.relative_to(staging)}")
     manifest = _json_payload(manifest_path.read_bytes(), "Package manifest")
@@ -306,6 +317,54 @@ def _atomic_text(path: Path, value: str) -> None:
     os.replace(temporary, path)
 
 
+def _install_client_bridge(installed: Path, version: str) -> Path:
+    base = os.getenv("LOCALAPPDATA") or tempfile.gettempdir()
+    client_root = Path(base) / "MayaMCP" / "client"
+    version_root = client_root / "versions" / version
+    version_root.mkdir(parents=True, exist_ok=True)
+
+    source_bridge = installed / "bin" / "maya-mcp-bridge.exe"
+    source_launcher = installed / "client" / "Start-MayaMcpBridge.ps1"
+    source_configurator = installed / "client" / "Configure-MayaMcpClients.ps1"
+    bridge_digest = _sha256(source_bridge.read_bytes())
+    registered_bridge = version_root / f"maya-mcp-bridge-{bridge_digest[:16]}.exe"
+    if not registered_bridge.is_file():
+        shutil.copy2(source_bridge, registered_bridge)
+    shutil.copy2(source_launcher, client_root / "Start-MayaMcpBridge.ps1")
+    shutil.copy2(source_configurator, client_root / "Configure-MayaMcpClients.ps1")
+
+    registry_path = client_root / "bridge-installations.json"
+    installations: list[dict[str, Any]] = []
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        if registry.get("schema_version") == 1 and isinstance(
+            registry.get("installations"), list
+        ):
+            installations = [
+                item
+                for item in registry["installations"]
+                if isinstance(item, dict) and item.get("version") != version
+            ]
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    installations.append(
+        {
+            "version": version,
+            "path": str(registered_bridge),
+            "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+    )
+    _atomic_text(
+        registry_path,
+        json.dumps(
+            {"schema_version": 1, "installations": installations},
+            separators=(",", ":"),
+        )
+        + "\n",
+    )
+    return registered_bridge
+
+
 def install_archive_bytes(
     update: dict[str, Any], payload: bytes, modules_directory: str | os.PathLike[str]
 ) -> dict[str, str]:
@@ -327,6 +386,8 @@ def install_archive_bytes(
             shutil.rmtree(installed)
         os.replace(staging / folder_name, installed)
 
+        registered_bridge = _install_client_bridge(installed, update["version"])
+
         major = update["maya_major_version"]
         descriptor = modules / f"maya-mcp-{major}.mod"
         module_text = (
@@ -341,7 +402,11 @@ def install_archive_bytes(
             legacy_text = legacy.read_text(encoding="utf-8", errors="replace")
             if re.search(r"(?m)^\+\s+maya-mcp\s+", legacy_text):
                 legacy.unlink()
-        return {"installed": str(installed), "module": str(descriptor)}
+        return {
+            "installed": str(installed),
+            "module": str(descriptor),
+            "bridge": str(registered_bridge),
+        }
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
