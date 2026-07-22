@@ -75,11 +75,28 @@ def _check_for_updates(*_: Any) -> None:
     updater.check_for_updates(manual=True)
 
 
+def _register_client_bridge() -> Path:
+    from . import __version__, updater
+
+    package_root = Path(__file__).resolve().parents[2]
+    return updater.register_client_bridge(package_root, __version__)
+
+
 def _configure_clients(*_: Any) -> None:
     package_root = Path(__file__).resolve().parents[2]
     configurator = package_root / "client" / "Configure-MayaMcpClients.ps1"
     local_base = Path(os.getenv("LOCALAPPDATA") or os.getenv("TEMP") or str(Path.home()))
     launcher = local_base / "MayaMCP" / "client" / "Start-MayaMcpBridge.ps1"
+    try:
+        _register_client_bridge()
+    except (OSError, ValueError) as error:
+        cmds.confirmDialog(
+            title="Configure Maya MCP Clients",
+            message=f"Could not register the client bridge:\n{error}",
+            button=["OK"],
+            icon="critical",
+        )
+        return
     if not configurator.is_file() or not launcher.is_file():
         cmds.confirmDialog(
             title="Configure Maya MCP Clients",
@@ -138,6 +155,10 @@ def _configure_clients(*_: Any) -> None:
 def install_menu() -> None:
     if cmds.about(batch=True):
         return
+    try:
+        _register_client_bridge()
+    except (OSError, ValueError) as error:
+        cmds.warning(f"Maya MCP: could not register the client bridge: {error}")
     remove_menu()
     menu = cmds.menu(_MENU, label="Maya MCP", parent="MayaWindow", tearOff=True)
     cmds.menuItem(label="Server Status...", parent=menu, command=_show_status)

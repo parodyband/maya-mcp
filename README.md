@@ -85,6 +85,8 @@ manifest and GitHub's SHA-256 asset digest, and installed side-by-side. The load
 DLL is never overwritten. Close and reopen Maya to activate the staged version.
 The update also registers the matching stdio bridge. Codex and Claude Code keep
 using the same stable launcher, so their MCP configuration does not change.
+Packages installed by an older updater self-register this bridge the first time
+the new plug-in starts.
 
 Disable automatic checks while keeping the manual menu command available:
 
@@ -153,7 +155,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.2"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.3"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:

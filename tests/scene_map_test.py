@@ -26,7 +26,7 @@ def _assert_packaged_runtime() -> None:
 
     runtime_path = Path(maya_mcp_runtime.__file__).resolve()
     assert PACKAGE_SCRIPTS in runtime_path.parents, runtime_path
-    assert maya_mcp_runtime.__version__ == "0.5.2"
+    assert maya_mcp_runtime.__version__ == "0.5.3"
 
 
 class FakeView:

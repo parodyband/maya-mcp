@@ -317,7 +317,8 @@ def _atomic_text(path: Path, value: str) -> None:
     os.replace(temporary, path)
 
 
-def _install_client_bridge(installed: Path, version: str) -> Path:
+def register_client_bridge(installed: Path, version: str) -> Path:
+    """Register this package's versioned bridge behind the stable user launcher."""
     base = os.getenv("LOCALAPPDATA") or tempfile.gettempdir()
     client_root = Path(base) / "MayaMCP" / "client"
     version_root = client_root / "versions" / version
@@ -386,7 +387,7 @@ def install_archive_bytes(
             shutil.rmtree(installed)
         os.replace(staging / folder_name, installed)
 
-        registered_bridge = _install_client_bridge(installed, update["version"])
+        registered_bridge = register_client_bridge(installed, update["version"])
 
         major = update["maya_major_version"]
         descriptor = modules / f"maya-mcp-{major}.mod"

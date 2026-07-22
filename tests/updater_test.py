@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -14,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from maya_mcp_runtime import updater
 
 
-def _archive(version: str = "0.5.2", target: str = "2027", api: int = 20270100) -> bytes:
+def _archive(version: str = "0.5.3", target: str = "2027", api: int = 20270100) -> bytes:
     major = target.split(".", 1)[0]
     folder = f"maya-mcp-{version}-maya{target}"
     payload = io.BytesIO()
@@ -54,11 +55,11 @@ def _archive(version: str = "0.5.2", target: str = "2027", api: int = 20270100) 
 
 def _metadata(payload: bytes) -> dict[str, object]:
     return {
-        "version": "0.5.2",
+        "version": "0.5.3",
         "maya_target": "2027",
         "maya_major_version": "2027",
         "maya_api_version": 20270100,
-        "name": "maya-mcp-v0.5.2-maya2027-windows-x64.zip",
+        "name": "maya-mcp-v0.5.3-maya2027-windows-x64.zip",
         "size": len(payload),
         "sha256": hashlib.sha256(payload).hexdigest(),
         "url": "https://example.invalid/package.zip",
@@ -77,7 +78,7 @@ def test_selection() -> None:
         "browser_download_url": metadata["url"],
     }
     release = {
-        "tag_name": "v0.5.2",
+        "tag_name": "v0.5.3",
         "draft": False,
         "prerelease": False,
         "html_url": metadata["release_url"],
@@ -86,7 +87,7 @@ def test_selection() -> None:
     manifest = {
         "schema_version": 1,
         "name": "maya-mcp",
-        "version": "0.5.2",
+        "version": "0.5.3",
         "assets": [
             {
                 "maya_target": "2027",
@@ -101,7 +102,7 @@ def test_selection() -> None:
     }
     selected = updater.select_update(release, manifest, "0.4.1", 20270100)
     assert selected is not None and selected["maya_target"] == "2027"
-    assert updater.select_update(release, manifest, "0.5.2", 20270100) is None
+    assert updater.select_update(release, manifest, "0.5.3", 20270100) is None
     assert updater.select_update(release, manifest, "0.4.1", 20260300) is None
 
 
@@ -119,6 +120,12 @@ def test_install() -> None:
             installed = Path(result["installed"])
             assert (installed / "plug-ins" / "maya_mcp.mll").read_bytes() == b"test-plugin"
             assert Path(result["bridge"]).read_bytes() == b"test-bridge"
+            client_root = Path(temporary) / "MayaMCP" / "client"
+            shutil.rmtree(client_root)
+            migrated_bridge = updater.register_client_bridge(installed, "0.5.3")
+            assert migrated_bridge.read_bytes() == b"test-bridge"
+            assert (client_root / "Start-MayaMcpBridge.ps1").is_file()
+            assert (client_root / "bridge-installations.json").is_file()
             descriptor = modules / "maya-mcp-2027.mod"
             assert "MAYAVERSION:2027" in descriptor.read_text(encoding="utf-8")
             assert not legacy.exists()
