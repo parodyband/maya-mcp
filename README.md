@@ -45,20 +45,23 @@ You do not need Visual Studio, CMake, or an Autodesk devkit to install a release
 
 1. Close Maya.
 2. Download the matching ZIP from [GitHub Releases](https://github.com/parodyband/maya-mcp/releases/latest):
-   `maya2026.3` for Maya 2026.3 or `maya2027` for the latest Maya 2027 update.
-3. Extract the ZIP.
-4. Run `Install-MayaMcp.ps1` from PowerShell.
-5. Reopen Maya.
+   `maya2026.3` for Maya 2026.3 or `maya2027` for Maya 2027.1.
+3. Right-click the ZIP, choose **Extract All**, and open the extracted folder.
+4. Double-click **Install-MayaMcp.cmd**.
+5. Wait for the green installed message, press any key, and open Maya.
 
-If Windows blocks local scripts, run this from the extracted folder:
+That is the entire install. It does not require administrator access and does not
+change the machine-wide PowerShell policy. The installer copies only the matching
+binary into your user Maya modules folder and configures it to load automatically.
+
+For terminal-based or managed installs, the equivalent command is:
 
 ~~~powershell
 powershell -ExecutionPolicy Bypass -File .\Install-MayaMcp.ps1
 ~~~
 
-The installer copies only the matching binary, configures autoload when it finds
-Maya, and leaves older versions in place as a rollback. Maya 2026 and 2027 can
-coexist because each uses a version-qualified module descriptor.
+Older versions stay in place as a rollback. Maya 2026 and 2027 can coexist
+because each uses a version-qualified module descriptor.
 
 ## Automatic updates
 
@@ -137,7 +140,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.0"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.1"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -153,6 +156,7 @@ Create the two public release ZIPs plus `release-manifest.json`:
 
 ~~~powershell
 .\scripts\package-release.ps1
+.\scripts\test-release-installer.ps1
 ~~~
 
 Manual developer install for one Maya version:

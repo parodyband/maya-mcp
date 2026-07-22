@@ -43,7 +43,7 @@ def main() -> None:
 
         from maya_mcp_runtime import state
 
-        assert maya_mcp_runtime.__version__ == "0.5.0"
+        assert maya_mcp_runtime.__version__ == "0.5.1"
         state.install_callbacks()
         cmds.file(new=True, force=True)
         cmds.undoInfo(state=True)

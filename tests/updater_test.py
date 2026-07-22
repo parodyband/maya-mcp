@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from maya_mcp_runtime import updater
 
 
-def _archive(version: str = "0.5.0", target: str = "2027", api: int = 20270100) -> bytes:
+def _archive(version: str = "0.5.1", target: str = "2027", api: int = 20270100) -> bytes:
     major = target.split(".", 1)[0]
     folder = f"maya-mcp-{version}-maya{target}"
     payload = io.BytesIO()
@@ -46,11 +46,11 @@ def _archive(version: str = "0.5.0", target: str = "2027", api: int = 20270100) 
 
 def _metadata(payload: bytes) -> dict[str, object]:
     return {
-        "version": "0.5.0",
+        "version": "0.5.1",
         "maya_target": "2027",
         "maya_major_version": "2027",
         "maya_api_version": 20270100,
-        "name": "maya-mcp-v0.5.0-maya2027-windows-x64.zip",
+        "name": "maya-mcp-v0.5.1-maya2027-windows-x64.zip",
         "size": len(payload),
         "sha256": hashlib.sha256(payload).hexdigest(),
         "url": "https://example.invalid/package.zip",
@@ -69,7 +69,7 @@ def test_selection() -> None:
         "browser_download_url": metadata["url"],
     }
     release = {
-        "tag_name": "v0.5.0",
+        "tag_name": "v0.5.1",
         "draft": False,
         "prerelease": False,
         "html_url": metadata["release_url"],
@@ -78,7 +78,7 @@ def test_selection() -> None:
     manifest = {
         "schema_version": 1,
         "name": "maya-mcp",
-        "version": "0.5.0",
+        "version": "0.5.1",
         "assets": [
             {
                 "maya_target": "2027",
@@ -93,7 +93,7 @@ def test_selection() -> None:
     }
     selected = updater.select_update(release, manifest, "0.4.1", 20270100)
     assert selected is not None and selected["maya_target"] == "2027"
-    assert updater.select_update(release, manifest, "0.5.0", 20270100) is None
+    assert updater.select_update(release, manifest, "0.5.1", 20270100) is None
     assert updater.select_update(release, manifest, "0.4.1", 20260300) is None
 
 
