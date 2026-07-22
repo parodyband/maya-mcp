@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -13,14 +14,13 @@ import maya.standalone
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_SCRIPTS = (
-    ROOT
-    / "build"
-    / "maya2027-mcp-vs2022"
-    / "package"
-    / "maya-mcp"
-    / "scripts"
+PACKAGE_ROOT = Path(
+    os.environ.get(
+        "MAYA_MCP_TEST_PACKAGE",
+        ROOT / "build" / "maya2027-mcp-vs2022" / "package",
+    )
 ).resolve()
+PACKAGE_SCRIPTS = (PACKAGE_ROOT / "maya-mcp" / "scripts").resolve()
 sys.path.insert(0, str(PACKAGE_SCRIPTS))
 
 
@@ -29,7 +29,7 @@ def _assert_packaged_runtime() -> None:
 
     runtime_path = Path(maya_mcp_runtime.__file__).resolve()
     assert PACKAGE_SCRIPTS in runtime_path.parents, runtime_path
-    assert maya_mcp_runtime.__version__ == "0.4.1"
+    assert maya_mcp_runtime.__version__ == "0.5.0"
 
 
 def _invoke(name: str, arguments: dict[str, Any]) -> dict[str, Any]:

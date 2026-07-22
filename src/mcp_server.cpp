@@ -360,6 +360,8 @@ public:
         Json result{
             {"name", "maya-mcp"},
             {"version", MAYA_MCP_VERSION},
+            {"mayaTarget", MAYA_MCP_MAYA_TARGET},
+            {"mayaApiVersion", MAYA_MCP_MAYA_API_VERSION},
             {"protocolVersion", kProtocolVersion},
             {"running", running_.load()},
             {"endpoint", endpoint_},
@@ -678,7 +680,7 @@ private:
             {"serverInfo",
              {
                  {"name", "maya-mcp"},
-                 {"title", "Maya 2027 MCP"},
+                 {"title", std::string("Maya ") + MAYA_MCP_MAYA_TARGET + " MCP"},
                  {"version", MAYA_MCP_VERSION},
              }},
             {"instructions",
@@ -843,6 +845,8 @@ private:
             {"token", token_},
             {"protocolVersion", kProtocolVersion},
             {"pluginVersion", MAYA_MCP_VERSION},
+            {"mayaTarget", MAYA_MCP_MAYA_TARGET},
+            {"mayaApiVersion", MAYA_MCP_MAYA_API_VERSION},
             {"scriptExecutionEnabled",
              environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
             {"unsafeCodeEnabled", environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},

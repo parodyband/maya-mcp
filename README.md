@@ -1,12 +1,13 @@
 # Maya MCP
 
-A native Maya 2027 plug-in that gives MCP clients a typed, authenticated, and
-vision-aware interface to Maya.
+A native Maya 2026.3 and Maya 2027 plug-in that gives MCP clients a typed,
+authenticated, and vision-aware interface to Maya.
 
-Version 0.4 is a working development preview. It includes the native transport,
+Version 0.5 is a working development preview. It includes the native transport,
 Maya main-thread dispatch, scene and rigging tools, native VP2 depth readback,
 vision grounding, resources, prompts, security controls, and isolated batch and
-interactive test harnesses.
+interactive test harnesses. GitHub-hosted release metadata now drives exact-API,
+SHA-256-verified updates.
 
 ## What works
 
@@ -29,6 +30,8 @@ interactive test harnesses.
 - Non-serializing rig previews with bounded lifetime, strict ownership, and
   preflighted one-chunk acceptance when Maya undo is enabled
 - A Maya MCP menu for server status and one-click, per-session Python/MEL approval
+- Daily update checks plus one-click, side-by-side installation for the exact
+  Maya API version currently running
 
 The connected MCP host supplies the vision model. `maya.viewport.capture`
 returns the color image, camera matrices, projected joints, and optional native
@@ -36,29 +39,75 @@ experimental renderer-native depth. `maya.viewport.scene_map` and
 `maya.viewport.pick` ground pixels back to
 canonical Maya nodes. A stable object-ID render pass remains future work.
 
-## Prerequisites
+## Install a release
 
-- Autodesk Maya 2027 at C:\Program Files\Autodesk\Maya2027
-- Maya 2027.1 Update devkit under vendor\devkitBase
+You do not need Visual Studio, CMake, or an Autodesk devkit to install a release.
+
+1. Close Maya.
+2. Download the matching ZIP from [GitHub Releases](https://github.com/parodyband/maya-mcp/releases/latest):
+   `maya2026.3` for Maya 2026.3 or `maya2027` for the latest Maya 2027 update.
+3. Extract the ZIP.
+4. Run `Install-MayaMcp.ps1` from PowerShell.
+5. Reopen Maya.
+
+If Windows blocks local scripts, run this from the extracted folder:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File .\Install-MayaMcp.ps1
+~~~
+
+The installer copies only the matching binary, configures autoload when it finds
+Maya, and leaves older versions in place as a rollback. Maya 2026 and 2027 can
+coexist because each uses a version-qualified module descriptor.
+
+## Automatic updates
+
+Maya MCP checks GitHub Releases at most once every 24 hours. It selects a package
+only when its `MAYA_API_VERSION` exactly matches the running Maya process. Choose
+**Maya MCP > Check for Updates...** to check immediately.
+
+An accepted update is downloaded over HTTPS, verified against both the release
+manifest and GitHub's SHA-256 asset digest, and installed side-by-side. The loaded
+DLL is never overwritten. Close and reopen Maya to activate the staged version.
+
+Disable automatic checks while keeping the manual menu command available:
+
+~~~powershell
+$env:MAYA_MCP_DISABLE_UPDATE_CHECK = '1'
+& 'C:\Program Files\Autodesk\Maya2027\bin\maya.exe'
+~~~
+
+## Developer prerequisites
+
+- Autodesk Maya 2027 for the full local runtime and viewport test gates
+- Maya 2026.3 Update and Maya 2027.1 Update C++ devkit ZIPs in `Downloads`
 - Visual Studio 2022 17.8.3 or newer with **Desktop development with C++**
 - CMake 3.25 or newer
 - Git, used by CMake to fetch two pinned header-only dependencies
 
-The SDK setup defines:
+Install a lean copy of both SDKs. The script extracts only the Maya headers and
+import libraries; Autodesk's large examples and bundled dependency SDKs are not
+needed for this plug-in.
 
-~~~text
-DEVKIT_LOCATION=D:\Maya-MCP\vendor\devkitBase
-MAYA_LOCATION=C:\Program Files\Autodesk\Maya2027
+~~~powershell
+.\scripts\setup-devkits.ps1
 ~~~
 
-Open a new terminal to read those user environment variables.
+The ignored SDK store is `%LOCALAPPDATA%\MayaMCP\devkits`. Autodesk devkit files
+are never committed or included in a GitHub release.
 
 ## Quick start
 
-One command builds, installs, and configures the plug-in to autoload:
+One command builds, installs, and configures the Maya 2027 plug-in to autoload:
 
 ~~~powershell
 .\scripts\setup.ps1
+~~~
+
+For Maya 2026.3 on a machine where it is installed:
+
+~~~powershell
+.\scripts\setup.ps1 -MayaVersion 2026.3
 ~~~
 
 Open Maya. The server starts automatically and the **Maya MCP** menu shows its
@@ -66,10 +115,17 @@ status. Normal rigging does not require Python/MEL approval.
 
 ## Developer build and tests
 
-Build the Release package:
+Build both Release packages:
 
 ~~~powershell
 .\scripts\build.ps1
+~~~
+
+Build only one target:
+
+~~~powershell
+.\scripts\build.ps1 -MayaVersion 2026.3
+.\scripts\build.ps1 -MayaVersion 2027
 ~~~
 
 Run the full standalone integration test:
@@ -81,7 +137,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.4.1"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.0"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -93,10 +149,16 @@ Validate the real GPU viewport in a separate, isolated Maya process:
 Evidence is written below `build\viewport-validation\`. The launcher never
 attaches to or closes a Maya process that it did not start.
 
-Manual developer install:
+Create the two public release ZIPs plus `release-manifest.json`:
 
 ~~~powershell
-.\scripts\install-module.ps1
+.\scripts\package-release.ps1
+~~~
+
+Manual developer install for one Maya version:
+
+~~~powershell
+.\scripts\install-module.ps1 -MayaVersion 2027
 ~~~
 
 Open **Windows > Settings/Preferences > Plug-in Manager**, then load
@@ -111,10 +173,11 @@ import maya.cmds as cmds
 print(json.dumps(json.loads(cmds.mayaMcpStatus()), indent=2))
 ~~~
 
-The packaged plug-in is:
+The configured build packages are outside the repository working tree:
 
 ~~~text
-build\maya2027-mcp-vs2022\package\maya-mcp\plug-ins\maya_mcp.mll
+%LOCALAPPDATA%\MayaMCP\build\maya2026.3-mcp-vs2022\package
+%LOCALAPPDATA%\MayaMCP\build\maya2027-mcp-vs2022\package
 ~~~
 
 ## Connect an MCP client
@@ -214,8 +277,9 @@ $env:MAYA_MCP_ALLOW_UNSAFE_CODE = '1'
 & 'C:\Program Files\Autodesk\Maya2027\bin\maya.exe'
 ~~~
 
-Approving scripts still does not make remote network access available. The
-server remains bound to 127.0.0.1 and requires its bearer token.
+The MCP server remains bound to 127.0.0.1 and requires its bearer token.
+Approved Python or MEL still has your full user privileges, including file,
+process, and network access.
 
 ## Maya commands
 
@@ -251,6 +315,7 @@ Workflow prompts:
 - [Protocol and tool API](docs/API.md)
 - [Vision-guided rigging workflow](docs/VISION_RIGGING.md)
 - [Roadmap and known limits](docs/ROADMAP.md)
+- [Updates and releases](docs/UPDATES_AND_RELEASES.md)
 
 The devkit and generated builds are excluded from Git. CMake fetches
 cpp-httplib v0.50.1 and nlohmann/json v3.12.0 into the ignored build tree.

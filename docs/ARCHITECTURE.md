@@ -45,6 +45,10 @@ The C++ and Python boundary is deliberate. C++ owns lifetime, concurrency,
 transport, and security. Python provides fast access to Maya commands for broad
 coverage without compiling one native command per Maya feature.
 
+Release packages are emitted per Maya API. The updater selects an exact API
+match, verifies GitHub and manifest digests, and atomically advances only the
+matching Maya-version module descriptor for the next process start.
+
 Depth render-target capture already lives in C++. High-volume mesh data,
 additional Viewport 2.0 passes, native undo commands, and UFE support will move
 into C++ as the project matures.

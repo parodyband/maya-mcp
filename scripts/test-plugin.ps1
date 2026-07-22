@@ -1,9 +1,17 @@
 [CmdletBinding()]
-param([string]$MayaLocation = 'C:\Program Files\Autodesk\Maya2027')
+param(
+    [ValidateSet('2026.3', '2027')]
+    [string]$MayaVersion = '2027',
+    [string]$MayaLocation = ''
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$packageRoot = Join-Path $repoRoot 'build\maya2027-mcp-vs2022\package'
+. (Join-Path $PSScriptRoot 'common.ps1')
+if (-not $MayaLocation) {
+    $MayaLocation = "C:\Program Files\Autodesk\Maya$(Get-MayaMcpMajorVersion -MayaVersion $MayaVersion)"
+}
+$packageRoot = Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion
 $mayapy = Join-Path $MayaLocation 'bin\mayapy.exe'
 $plugin = Join-Path $packageRoot 'maya-mcp\plug-ins\maya_mcp.mll'
 if (-not (Test-Path -LiteralPath $mayapy)) { throw "mayapy was not found at $mayapy" }
@@ -17,7 +25,7 @@ New-Item -ItemType Directory -Path $mayaAppDir, $localAppData -Force | Out-Null
 $environmentNames = @(
     'MAYA_APP_DIR', 'LOCALAPPDATA', 'MAYA_MODULE_PATH', 'MAYA_MCP_TOKEN',
     'MAYA_MCP_ALLOW_UNSAFE_CODE', 'MAYA_DISABLE_CIP', 'MAYA_DISABLE_CER',
-    'PYTHONPATH'
+    'MAYA_MCP_TEST_PACKAGE', 'PYTHONPATH'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -40,7 +48,9 @@ try {
     $env:MAYA_MCP_ALLOW_UNSAFE_CODE = '0'
     $env:MAYA_DISABLE_CIP = '1'
     $env:MAYA_DISABLE_CER = '1'
+    $env:MAYA_MCP_TEST_PACKAGE = $packageRoot
 
+    Invoke-MayaTest 'tests\updater_test.py' 'Updater integrity test'
     Invoke-MayaTest 'tests\vp2_command_test.py' 'Native VP2 command test'
     Invoke-MayaTest 'tests\viewport_contract_test.py' 'Viewport contract test'
     Invoke-MayaTest 'tests\scene_map_test.py' 'Viewport scene-map test'

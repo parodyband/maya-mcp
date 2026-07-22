@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,13 @@ import maya.standalone
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_SCRIPTS = (
-    ROOT
-    / "build"
-    / "maya2027-mcp-vs2022"
-    / "package"
-    / "maya-mcp"
-    / "scripts"
+PACKAGE_ROOT = Path(
+    os.environ.get(
+        "MAYA_MCP_TEST_PACKAGE",
+        ROOT / "build" / "maya2027-mcp-vs2022" / "package",
+    )
 ).resolve()
+PACKAGE_SCRIPTS = (PACKAGE_ROOT / "maya-mcp" / "scripts").resolve()
 sys.path.insert(0, str(PACKAGE_SCRIPTS))
 
 
@@ -43,7 +43,7 @@ def main() -> None:
 
         from maya_mcp_runtime import state
 
-        assert maya_mcp_runtime.__version__ == "0.4.1"
+        assert maya_mcp_runtime.__version__ == "0.5.0"
         state.install_callbacks()
         cmds.file(new=True, force=True)
         cmds.undoInfo(state=True)

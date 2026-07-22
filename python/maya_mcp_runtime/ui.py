@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Any
 
 import maya.cmds as cmds
@@ -42,6 +43,8 @@ def _show_status(*_: Any) -> None:
     status = json.loads(cmds.mayaMcpStatus())
     message = (
         f"Maya MCP {status.get('version', '?')}\n"
+        f"Build: Maya {status.get('mayaTarget', '?')} "
+        f"(API {status.get('mayaApiVersion', '?')})\n"
         f"Running: {status.get('running', False)}\n"
         f"Endpoint: {status.get('endpoint', '')}\n"
         "Python/MEL: "
@@ -62,6 +65,12 @@ def _stop_server(*_: Any) -> None:
         position="topCenter",
         fade=True,
     )
+
+
+def _check_for_updates(*_: Any) -> None:
+    from . import updater
+
+    updater.check_for_updates(manual=True)
 
 
 def install_menu() -> None:
@@ -85,9 +94,18 @@ def install_menu() -> None:
     cmds.menuItem(divider=True, parent=menu)
     cmds.menuItem(label="Start / Refresh Server", parent=menu, command=_start_server)
     cmds.menuItem(label="Stop Server", parent=menu, command=_stop_server)
+    cmds.menuItem(divider=True, parent=menu)
+    cmds.menuItem(label="Check for Updates...", parent=menu, command=_check_for_updates)
+    if os.getenv("MAYA_MCP_DISABLE_UPDATE_CHECK", "").lower() not in _TRUE_VALUES:
+        from . import updater
+
+        updater.start_auto_check()
 
 
 def remove_menu() -> None:
+    updater_module = sys.modules.get("maya_mcp_runtime.updater")
+    if updater_module is not None:
+        updater_module.shutdown()
     if cmds.about(batch=True):
         return
     if cmds.menu(_MENU, exists=True):

@@ -1391,6 +1391,14 @@ def _finish() -> None:
         except BaseException as error:
             _outcome["plugin_unload"] = f"failed: {error}"
             _outcome["passed"] = False
+    _outcome["active_python_threads_after_unload"] = [
+        {
+            "name": thread.name,
+            "daemon": thread.daemon,
+            "alive": thread.is_alive(),
+        }
+        for thread in threading.enumerate()
+    ]
     if _result_path is not None:
         _atomic_write_json(_result_path, _outcome)
     cmds.quit(force=True)
@@ -1416,15 +1424,15 @@ def _start() -> None:
             f"{runtime_path} (expected below {packaged_scripts})",
         )
         _assert(
-            maya_mcp_runtime.__version__ == "0.4.1",
+            maya_mcp_runtime.__version__ == "0.5.0",
             "Interactive gate imported the wrong Python runtime version: "
             f"{maya_mcp_runtime.__version__}",
         )
         status = json.loads(cmds.mayaMcpStatus())
         _assert(status.get("running") is True, f"Maya MCP did not start: {status}")
         _assert(
-            status.get("version") == "0.4.1",
-            f"Interactive gate expected Maya MCP 0.4.1, got {status.get('version')}",
+            status.get("version") == "0.5.0",
+            f"Interactive gate expected Maya MCP 0.5.0, got {status.get('version')}",
         )
         discovery_path = Path(status["discoveryFile"]).resolve()
         local_app_data = Path(os.environ["LOCALAPPDATA"]).resolve()

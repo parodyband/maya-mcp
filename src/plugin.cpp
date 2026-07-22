@@ -332,7 +332,8 @@ MStatus failInitialization(MFnPlugin& plugin, const std::string& reason,
 }
 
 MStatus initializePluginImpl(MObject object) {
-    MFnPlugin plugin(object, "Austin Crane", MAYA_MCP_VERSION, "2027");
+    MFnPlugin plugin(
+        object, "Austin Crane", MAYA_MCP_VERSION, MAYA_MCP_MAYA_VERSION);
 
     gDispatcher = std::make_unique<maya_mcp::MainThreadDispatcher>();
     std::string error;

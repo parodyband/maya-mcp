@@ -1,13 +1,19 @@
 [CmdletBinding()]
 param(
-    [string]$MayaLocation = 'C:\Program Files\Autodesk\Maya2027',
+    [ValidateSet('2026.3', '2027')]
+    [string]$MayaVersion = '2027',
+    [string]$MayaLocation = '',
     [ValidateRange(30, 86400)]
     [int]$TimeoutSeconds = 240
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$packageRoot = Join-Path $repoRoot 'build\maya2027-mcp-vs2022\package'
+. (Join-Path $PSScriptRoot 'common.ps1')
+if (-not $MayaLocation) {
+    $MayaLocation = "C:\Program Files\Autodesk\Maya$(Get-MayaMcpMajorVersion -MayaVersion $MayaVersion)"
+}
+$packageRoot = Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion
 $maya = Join-Path $MayaLocation 'bin\maya.exe'
 $plugin = Join-Path $packageRoot 'maya-mcp\plug-ins\maya_mcp.mll'
 $testModule = Join-Path $repoRoot 'tests\interactive_viewport_test.py'
@@ -56,17 +62,42 @@ $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
 $exitCode = $null
 $started = $false
+$processCleanup = 'normal'
 try {
     Write-Host "Launching an isolated Maya viewport test. Evidence: $evidenceDir"
     if (-not $process.Start()) { throw 'Maya did not start.' }
     $started = $true
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $passingResultSeenAt = $null
+    while (-not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        if (Test-Path -LiteralPath $resultPath) {
+            try {
+                $liveResult = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+                if ($liveResult.passed -and $liveResult.plugin_unload -eq 'passed') {
+                    if ($null -eq $passingResultSeenAt) {
+                        $passingResultSeenAt = [DateTime]::UtcNow
+                    } elseif (([DateTime]::UtcNow - $passingResultSeenAt).TotalSeconds -ge 10) {
+                        # Maya has completed the gate and unloaded our DLL, but
+                        # an Autodesk-owned shutdown service may still keep this
+                        # isolated process alive. Clean up only the child this
+                        # launcher owns after a bounded graceful-exit window.
+                        $process.Kill()
+                        $process.WaitForExit()
+                        $processCleanup = 'forced-after-passing-plugin-unload'
+                        break
+                    }
+                }
+            } catch {
+                # The Maya process may still be atomically replacing the result.
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $process.HasExited) {
         # Kill only the Process object started above. Never enumerate or stop
         # Maya by executable name, window title, or process ID.
-        if (-not $process.HasExited) {
-            $process.Kill()
-            $process.WaitForExit()
-        }
+        $process.Kill()
+        $process.WaitForExit()
         throw "Interactive viewport validation timed out after $TimeoutSeconds seconds."
     }
     $exitCode = $process.ExitCode
@@ -87,12 +118,18 @@ if (-not (Test-Path -LiteralPath $resultPath)) {
     throw "Maya exited with code $reportedExitCode without writing $resultPath"
 }
 $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+$result | Add-Member -NotePropertyName process_cleanup -NotePropertyValue $processCleanup -Force
 if (-not $result.passed) {
     $result | ConvertTo-Json -Depth 20
     throw "Interactive viewport validation failed. See $resultPath"
 }
-if ($exitCode -ne 0) {
+if ($processCleanup -eq 'normal' -and $exitCode -ne 0) {
     throw "Maya wrote a passing result but exited with code $exitCode. See $resultPath"
 }
+$result | Add-Member -NotePropertyName process_exit_code -NotePropertyValue $exitCode -Force
+$result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $resultPath -Encoding utf8
 $result | ConvertTo-Json -Depth 20
+if ($processCleanup -ne 'normal') {
+    Write-Warning 'Maya passed and unloaded Maya MCP but required isolated-process cleanup after the exit grace period.'
+}
 Write-Host "Interactive viewport validation passed. Evidence: $resultPath"

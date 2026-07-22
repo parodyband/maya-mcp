@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -10,16 +11,19 @@ import maya.standalone
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = Path(
+    os.environ.get(
+        "MAYA_MCP_TEST_PACKAGE",
+        ROOT / "build" / "maya2027-mcp-vs2022" / "package",
+    )
+).resolve()
 PLUGIN = (
-    ROOT
-    / "build"
-    / "maya2027-mcp-vs2022"
-    / "package"
+    PACKAGE_ROOT
     / "maya-mcp"
     / "plug-ins"
     / "maya_mcp.mll"
 )
-SCRIPTS = PLUGIN.parents[1] / 'scripts'
+SCRIPTS = PLUGIN.parents[1] / "scripts"
 
 
 def invoke(request: dict[str, object]) -> dict[str, object]:

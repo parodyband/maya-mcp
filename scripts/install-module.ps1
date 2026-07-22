@@ -1,27 +1,40 @@
 [CmdletBinding()]
-param([string]$ModulesDirectory = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya\modules'))
+param(
+    [ValidateSet('2026.3', '2027')]
+    [string]$MayaVersion = '2027',
+    [string]$ModulesDirectory = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya\modules')
+)
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$packageRoot = Join-Path $repoRoot 'build\maya2027-mcp-vs2022\package'
+. (Join-Path $PSScriptRoot 'common.ps1')
+$packageRoot = Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion
 $plugin = Join-Path $packageRoot 'maya-mcp\plug-ins\maya_mcp.mll'
 if (-not (Test-Path -LiteralPath $plugin)) { throw 'Build the Release plug-in first.' }
 $packagedModulePath = Join-Path $packageRoot 'maya-mcp.mod'
 $packagedModule = Get-Content -LiteralPath $packagedModulePath -Raw
-if ($packagedModule -notmatch '(?m)^\+ maya-mcp ([^\s]+) ') {
-    throw 'Could not read the Maya MCP version from the packaged module file.'
+$manifest = Get-Content -LiteralPath (Join-Path $packageRoot 'package-manifest.json') -Raw | ConvertFrom-Json
+$version = [string]$manifest.version
+if (-not $version -or [string]$manifest.maya_target -ne $MayaVersion) {
+    throw "Package metadata does not match Maya $MayaVersion."
 }
-$version = $Matches[1]
-$moduleFolderName = "maya-mcp-$version"
+$majorVersion = Get-MayaMcpMajorVersion -MayaVersion $MayaVersion
+$moduleFolderName = "maya-mcp-$version-maya$MayaVersion"
 New-Item -ItemType Directory -Force -Path $ModulesDirectory | Out-Null
 $installedModule = Join-Path $ModulesDirectory $moduleFolderName
 New-Item -ItemType Directory -Force -Path $installedModule | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $packageRoot 'maya-mcp') | Copy-Item -Destination $installedModule -Recurse -Force
-$installedModuleFile = Join-Path $ModulesDirectory 'maya-mcp.mod'
+$installedModuleFile = Join-Path $ModulesDirectory "maya-mcp-$majorVersion.mod"
 $installedModuleText = $packagedModule.Replace('./maya-mcp', "./$moduleFolderName")
 [System.IO.File]::WriteAllText(
     $installedModuleFile,
     $installedModuleText,
     [System.Text.UTF8Encoding]::new($false)
 )
-Write-Host "Installed Maya MCP $version in $installedModule"
+$legacyModuleFile = Join-Path $ModulesDirectory 'maya-mcp.mod'
+if (Test-Path -LiteralPath $legacyModuleFile) {
+    $legacyText = Get-Content -LiteralPath $legacyModuleFile -Raw
+    if ($legacyText -match '(?m)^\+\s+maya-mcp\s+') {
+        Remove-Item -LiteralPath $legacyModuleFile -Force
+    }
+}
+Write-Host "Installed Maya MCP $version for Maya $MayaVersion in $installedModule"

@@ -56,6 +56,14 @@ Recommended practice:
 - Stop the server when it is not needed.
 - Use a different Windows account for untrusted software.
 
+## Release updater
+
+The updater is the only built-in outbound network client. It contacts the fixed
+public repository `parodyband/maya-mcp` over HTTPS at most once every 24 hours,
+or when the user chooses **Check for Updates...**. Downloads are exact-Maya-API,
+size-bounded, SHA-256-verified, and installed side-by-side. Set
+`MAYA_MCP_DISABLE_UPDATE_CHECK=1` to disable automatic checks.
+
 ## Python and MEL
 
 maya.script.execute is full host code execution. It can:

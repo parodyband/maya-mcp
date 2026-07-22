@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(maya_mcp VERSION 0.4.1 LANGUAGES CXX)
+project(maya_mcp VERSION 0.5.0 LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -25,13 +25,34 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
 
-set(MAYA_DEVKIT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/devkitBase" CACHE PATH "Maya devkitBase directory")
-set(MAYA_LOCATION "C:/Program Files/Autodesk/Maya2027" CACHE PATH "Maya installation")
+set(MAYA_TARGET "2027" CACHE STRING "Maya release target (2026.3 or 2027)")
+set_property(CACHE MAYA_TARGET PROPERTY STRINGS "2026.3" "2027")
+if(MAYA_TARGET STREQUAL "2026.3")
+    set(MAYA_MAJOR_VERSION "2026")
+elseif(MAYA_TARGET STREQUAL "2027")
+    set(MAYA_MAJOR_VERSION "2027")
+else()
+    message(FATAL_ERROR "MAYA_TARGET must be 2026.3 or 2027, got: ${MAYA_TARGET}")
+endif()
+
+if(DEFINED ENV{LOCALAPPDATA})
+    set(_default_devkit "$ENV{LOCALAPPDATA}/MayaMCP/devkits/maya${MAYA_TARGET}/devkitBase")
+else()
+    set(_default_devkit "${CMAKE_CURRENT_SOURCE_DIR}/vendor/maya${MAYA_TARGET}/devkitBase")
+endif()
+set(MAYA_DEVKIT_ROOT "${_default_devkit}" CACHE PATH "Maya devkitBase directory")
+set(MAYA_LOCATION "C:/Program Files/Autodesk/Maya${MAYA_MAJOR_VERSION}" CACHE PATH "Maya installation")
 if(NOT EXISTS "${MAYA_DEVKIT_ROOT}/include/maya/MFnPlugin.h")
     message(FATAL_ERROR "Maya headers not found at ${MAYA_DEVKIT_ROOT}")
 endif()
 if(NOT EXISTS "${MAYA_DEVKIT_ROOT}/lib/OpenMaya.lib")
     message(FATAL_ERROR "Maya libraries not found at ${MAYA_DEVKIT_ROOT}/lib")
+endif()
+file(STRINGS "${MAYA_DEVKIT_ROOT}/include/maya/MTypes.h" _maya_api_line
+    REGEX "^#define MAYA_API_VERSION [0-9]+")
+string(REGEX MATCH "[0-9]+" MAYA_API_VERSION "${_maya_api_line}")
+if(NOT MAYA_API_VERSION)
+    message(FATAL_ERROR "Could not read MAYA_API_VERSION from ${MAYA_DEVKIT_ROOT}/include/maya/MTypes.h")
 endif()
 
 add_library(maya_mcp MODULE
@@ -47,6 +68,9 @@ target_compile_definitions(maya_mcp PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     MAYA_MCP_VERSION="${PROJECT_VERSION}"
+    MAYA_MCP_MAYA_VERSION="${MAYA_MAJOR_VERSION}"
+    MAYA_MCP_MAYA_TARGET="${MAYA_TARGET}"
+    MAYA_MCP_MAYA_API_VERSION=${MAYA_API_VERSION}
 )
 target_include_directories(maya_mcp
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -79,15 +103,23 @@ foreach(config Debug Release RelWithDebInfo MinSizeRel)
 endforeach()
 
 configure_file(cmake/maya-mcp.mod.in "${CMAKE_BINARY_DIR}/package/maya-mcp.mod" @ONLY)
-add_custom_command(TARGET maya_mcp POST_BUILD
+configure_file(cmake/package-manifest.json.in "${CMAKE_BINARY_DIR}/package/package-manifest.json" @ONLY)
+file(GLOB_RECURSE MAYA_MCP_RUNTIME_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/maya_mcp_runtime/*.py")
+add_custom_target(maya_mcp_runtime_package ALL
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/package/maya-mcp/scripts"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/python/maya_mcp_runtime"
         "${CMAKE_BINARY_DIR}/package/maya-mcp/scripts/maya_mcp_runtime"
+    DEPENDS maya_mcp ${MAYA_MCP_RUNTIME_SOURCES}
     COMMENT "Packaging Maya MCP Python runtime"
 )
 install(TARGETS maya_mcp RUNTIME DESTINATION maya-mcp/plug-ins LIBRARY DESTINATION maya-mcp/plug-ins)
 install(DIRECTORY python/maya_mcp_runtime DESTINATION maya-mcp/scripts)
-install(FILES "${CMAKE_BINARY_DIR}/package/maya-mcp.mod" DESTINATION .)
+install(FILES
+    "${CMAKE_BINARY_DIR}/package/maya-mcp.mod"
+    "${CMAKE_BINARY_DIR}/package/package-manifest.json"
+    DESTINATION .)
 message(STATUS "Maya devkit: ${MAYA_DEVKIT_ROOT}")
+message(STATUS "Maya target: ${MAYA_TARGET} (API ${MAYA_API_VERSION})")
 message(STATUS "Maya install: ${MAYA_LOCATION}")
