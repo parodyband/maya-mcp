@@ -124,7 +124,7 @@ def main() -> None:
                         "url": f"http://127.0.0.1:{server.server_port}/mcp",
                         "token": TOKEN,
                         "protocolVersion": PROTOCOL,
-                        "pluginVersion": "0.5.4",
+                        "pluginVersion": "0.5.5",
                     }
                 ),
                 encoding="utf-8",
@@ -204,7 +204,7 @@ def main() -> None:
                         {
                             "schema_version": 1,
                             "installations": [
-                                {"version": "0.5.4", "path": str(bridge)}
+                                {"version": "0.5.5", "path": str(bridge)}
                             ],
                         }
                     ),
