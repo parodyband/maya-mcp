@@ -666,10 +666,6 @@ def viewport_capture(
                 "type": "image",
                 "data": encoded,
                 "mimeType": data["mime_type"],
-                "annotations": {
-                    "audience": ["assistant", "user"],
-                    "priority": 1.0,
-                },
             }
         ]
         response = state.result(
@@ -678,8 +674,11 @@ def viewport_capture(
             f"Captured the Maya viewport at {width}x{height}",
             image_content=image_content,
         )
-        if native_capture is not None:
-            _redact_native_payload_from_text(response, native_capture)
+        # Keep the visible MCP result image-only. Some otherwise image-capable
+        # hosts reject a mixed ImageContent + TextContent response even though
+        # the protocol permits it. Capture metadata remains available through
+        # structuredContent without duplicating the image's base64 payload.
+        response["content"] = image_content
         return response
     except state.ToolError:
         raise

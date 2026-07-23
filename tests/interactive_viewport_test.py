@@ -1059,19 +1059,16 @@ def _run_validation(
         )
         raw_depth = native["native_capture"]["passes"]["depth"]["payload"]["data"]
         result_content = (client.last_tool_result or {}).get("content", [])
-        text_items = [
-            item.get("text", "")
-            for item in result_content
-            if item.get("type") == "text"
-        ]
-        _assert(bool(text_items), "Depth capture omitted its text fallback")
         _assert(
-            all(raw_depth not in item for item in text_items),
-            "Native depth payload was duplicated into the text fallback",
+            [item.get("type") for item in result_content] == ["image"],
+            "Viewport capture did not return a client-compatible image-only result",
         )
         _assert(
-            any("data_omitted_from_text" in item for item in text_items),
-            "Depth text fallback did not explain payload redaction",
+            all(
+                raw_depth not in json.dumps(item, separators=(",", ":"))
+                for item in result_content
+            ),
+            "Native depth payload was duplicated into visible MCP content",
         )
         scene_map_envelope, _ = client.call_tool(
             "maya.viewport.scene_map",
@@ -1424,15 +1421,15 @@ def _start() -> None:
             f"{runtime_path} (expected below {packaged_scripts})",
         )
         _assert(
-            maya_mcp_runtime.__version__ == "0.5.4",
+            maya_mcp_runtime.__version__ == "0.5.5",
             "Interactive gate imported the wrong Python runtime version: "
             f"{maya_mcp_runtime.__version__}",
         )
         status = json.loads(cmds.mayaMcpStatus())
         _assert(status.get("running") is True, f"Maya MCP did not start: {status}")
         _assert(
-            status.get("version") == "0.5.4",
-            f"Interactive gate expected Maya MCP 0.5.4, got {status.get('version')}",
+            status.get("version") == "0.5.5",
+            f"Interactive gate expected Maya MCP 0.5.5, got {status.get('version')}",
         )
         discovery_path = Path(status["discoveryFile"]).resolve()
         local_app_data = Path(os.environ["LOCALAPPDATA"]).resolve()
