@@ -815,7 +815,7 @@ def _bounded_script_result(value: Any) -> tuple[Any, bool]:
 
 
 def script_execute(arguments: dict[str, Any], call: state.CallState) -> dict[str, Any]:
-    if os.getenv("MAYA_MCP_ALLOW_UNSAFE_CODE", "").lower() not in {
+    if (os.getenv("MAYA_MCP_ALLOW_UNSAFE_CODE") or "1").lower() not in {
         "1",
         "true",
         "yes",
@@ -823,7 +823,8 @@ def script_execute(arguments: dict[str, Any], call: state.CallState) -> dict[str
     }:
         raise state.ToolError(
             "CAPABILITY_DISABLED",
-            "Unsafe script execution is disabled. Set MAYA_MCP_ALLOW_UNSAFE_CODE=1 before starting Maya to enable it.",
+            "Unsafe script execution is disabled by MAYA_MCP_ALLOW_UNSAFE_CODE. "
+            "Remove the override or set it to 1 to enable script execution.",
         )
     language = arguments["language"]
     source = arguments["source"]

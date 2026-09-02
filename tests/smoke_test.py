@@ -38,7 +38,7 @@ if packaged_scripts not in runtime_path.parents:
 status = json.loads(cmds.mayaMcpStatus())
 if not status["running"]:
     fail(f"Maya MCP did not start: {status}")
-if status["version"] != "0.5.5":
+if status["version"] != "0.5.6":
     fail(f"Unexpected Maya MCP version: {status['version']}")
 
 with open(status["discoveryFile"], "r", encoding="utf-8") as stream:
@@ -251,7 +251,9 @@ call_tool(
     {"language": "python", "source": "result = 1"},
     expect_error_code="CAPABILITY_DISABLED",
 )
-os.environ["MAYA_MCP_ALLOW_UNSAFE_CODE"] = "1"
+os.environ.pop("MAYA_MCP_ALLOW_UNSAFE_CODE", None)
+if not json.loads(cmds.mayaMcpStatus())["scriptExecutionEnabled"]:
+    fail("Script execution was not enabled by default")
 call_tool(
     24,
     "maya.script.execute",
@@ -348,7 +350,9 @@ if not bounded_script["data"]["output_truncated"]:
     fail("Script stdout truncation was not reported")
 if not bounded_script["data"]["result_truncated"]:
     fail("Large script result truncation was not reported")
-os.environ.pop("MAYA_MCP_ALLOW_UNSAFE_CODE", None)
+os.environ["MAYA_MCP_ALLOW_UNSAFE_CODE"] = "0"
+if json.loads(cmds.mayaMcpStatus())["scriptExecutionEnabled"]:
+    fail("The script execution opt-out was ignored")
 if not json.loads(cmds.mayaMcpStatus())["running"]:
     fail("A nested script call was able to stop the MCP server")
 

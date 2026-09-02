@@ -890,8 +890,9 @@ TOOLS = [
         "Execute Python or MEL",
         "Unsafe escape hatch for capabilities not yet represented by typed tools. "
         "Runs with the user's full Maya privileges, is not sandboxed or safely "
-        "interruptible, and requires explicit per-session approval from Maya's "
-        "Maya MCP menu or MAYA_MCP_ALLOW_UNSAFE_CODE=1.",
+        "interruptible. It is enabled by default for the authenticated local "
+        "client and can be disabled from Maya's Maya MCP menu or with "
+        "MAYA_MCP_ALLOW_UNSAFE_CODE=0.",
         _object(
             {
                 "language": {"type": "string", "enum": ["python", "mel"]},

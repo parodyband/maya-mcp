@@ -447,9 +447,10 @@ and canonical legend are implemented.
 }
 ~~~
 
-The tool is disabled unless the user approves it from the Maya MCP menu for the
-current session or sets MAYA_MCP_ALLOW_UNSAFE_CODE. Successful results include
-stdout, stderr, a JSON-safe result, and SHA-256 source hash.
+The tool is enabled by default for the authenticated local client. Clear **Maya
+MCP > Allow Python/MEL Automation This Session** or set
+`MAYA_MCP_ALLOW_UNSAFE_CODE=0` before launch to disable it. Successful results
+include stdout, stderr, a JSON-safe result, and SHA-256 source hash.
 
 ## Resources
 
@@ -485,4 +486,4 @@ stdout, stderr, a JSON-safe result, and SHA-256 source hash.
 | `VIEWPORT_CAPTURE_TOO_LARGE` | Encoded color exceeded the response budget | Reduce width/height or use JPEG |
 | `NATIVE_VIEWPORT_CAPTURE_FAILED` / `CAPTURE_FAILED` | VP2 depth contract or renderer operation failed | Retry in a standard VP2 view; inspect error details |
 | `UNSUPPORTED_PASS` | Stable object-ID capture is not implemented | Use scene map plus pixel picking |
-| `CAPABILITY_DISABLED` | Python/MEL escape hatch is off | Prefer typed tools or explicitly opt in for a trusted session |
+| `CAPABILITY_DISABLED` | Python/MEL escape hatch is off | Prefer typed tools or remove the explicit opt-out for a trusted session |

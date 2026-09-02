@@ -7,6 +7,21 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $hasher = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $hasher.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 $runningMaya = @(Get-Process -Name 'maya' -ErrorAction SilentlyContinue)
 if ($runningMaya.Count -and -not $AllowMayaRunning) {
     throw 'Close all Autodesk Maya windows, then double-click Install-MayaMcp.cmd again.'
@@ -78,7 +93,7 @@ $clientRoot = if ($env:LOCALAPPDATA) {
 }
 $bridgeVersionRoot = Join-Path $clientRoot "versions\$version"
 New-Item -ItemType Directory -Force -Path $bridgeVersionRoot | Out-Null
-$bridgeDigest = (Get-FileHash -LiteralPath $installedBridge -Algorithm SHA256).Hash.ToLowerInvariant()
+$bridgeDigest = Get-Sha256 $installedBridge
 $registeredBridge = Join-Path $bridgeVersionRoot "maya-mcp-bridge-$($bridgeDigest.Substring(0, 16)).exe"
 if (-not (Test-Path -LiteralPath $registeredBridge -PathType Leaf)) {
     Copy-Item -LiteralPath $installedBridge -Destination $registeredBridge

@@ -48,7 +48,17 @@ $headers = @{
 }
 
 function Get-Sha256([string]$Path) {
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $hasher = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $hasher.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
 }
 
 function Assert-Sha256([string]$Path, [string]$Expected, [string]$Label) {

@@ -155,7 +155,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.5"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.6"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -304,16 +304,16 @@ honestly sandboxed or force-cancelled inside Maya.
 
 ## Python and MEL fallback
 
-Script execution remains disabled by default. When a typed operation genuinely
-cannot express the task, click:
+Script execution is enabled by default for the authenticated local client. To
+turn it off for the current Maya process, clear:
 
 **Maya MCP > Allow Python/MEL Automation This Session**
 
-The approval applies immediately and expires when Maya closes. It does not
-require a restart. Headless automation can still opt in before launch:
+The setting applies immediately and expires when Maya closes. It does not
+require a restart. Headless sessions can opt out before launch:
 
 ~~~powershell
-$env:MAYA_MCP_ALLOW_UNSAFE_CODE = '1'
+$env:MAYA_MCP_ALLOW_UNSAFE_CODE = '0'
 & 'C:\Program Files\Autodesk\Maya2027\bin\maya.exe'
 ~~~
 

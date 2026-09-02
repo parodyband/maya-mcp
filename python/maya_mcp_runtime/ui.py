@@ -17,7 +17,7 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def script_execution_enabled() -> bool:
-    return os.getenv("MAYA_MCP_ALLOW_UNSAFE_CODE", "").lower() in _TRUE_VALUES
+    return (os.getenv("MAYA_MCP_ALLOW_UNSAFE_CODE") or "1").lower() in _TRUE_VALUES
 
 
 def _set_script_execution(enabled: bool) -> None:

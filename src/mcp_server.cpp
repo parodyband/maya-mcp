@@ -61,8 +61,11 @@ std::string environmentValue(const char* name) {
     return result;
 }
 
-bool environmentFlag(const char* name) {
+bool environmentFlag(const char* name, const bool defaultValue = false) {
     std::string value = environmentValue(name);
+    if (value.empty()) {
+        return defaultValue;
+    }
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
@@ -368,8 +371,9 @@ public:
             {"discoveryFile", discoveryFile_.string()},
             {"pendingMainThreadRequests", dispatcher_.queued()},
             {"scriptExecutionEnabled",
-             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
-            {"unsafeCodeEnabled", environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
+             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE", true)},
+            {"unsafeCodeEnabled",
+             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE", true)},
             {"lastError", lastError_},
         };
         {
@@ -848,8 +852,9 @@ private:
             {"mayaTarget", MAYA_MCP_MAYA_TARGET},
             {"mayaApiVersion", MAYA_MCP_MAYA_API_VERSION},
             {"scriptExecutionEnabled",
-             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
-            {"unsafeCodeEnabled", environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE")},
+             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE", true)},
+            {"unsafeCodeEnabled",
+             environmentFlag("MAYA_MCP_ALLOW_UNSAFE_CODE", true)},
         };
         writeJsonFileAtomically(discoveryFile_, discovery);
         writeJsonFileAtomically(currentFile_, discovery);

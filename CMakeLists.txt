@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(maya_mcp VERSION 0.5.5 LANGUAGES CXX)
+project(maya_mcp VERSION 0.5.6 LANGUAGES CXX)
 
 include(FetchContent)
 
