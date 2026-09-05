@@ -1,3 +1,3 @@
 """Maya-side runtime for the native Maya MCP plug-in."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"

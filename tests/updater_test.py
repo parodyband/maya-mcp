@@ -9,6 +9,7 @@ import sys
 import tempfile
 import zipfile
 from unittest.mock import patch
+from types import ModuleType
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
@@ -160,6 +161,29 @@ def test_skill_update() -> None:
             assert (Path(temporary) / "MayaMCP/client/skills/maya-mcp/SKILL.md").read_text() == "shared skill"
 
 
+def test_check_uses_maya_application_modules() -> None:
+    maya = ModuleType("maya")
+    cmds = ModuleType("maya.cmds")
+    maya.cmds = cmds
+    cmds.about = lambda **kwargs: False if kwargs.get("batch") else 20270100
+    cmds.inViewMessage = lambda **kwargs: None
+    with tempfile.TemporaryDirectory() as temporary:
+        # Include a custom MAYA_APP_DIR to ensure we honor Maya's resolved path.
+        for root in (Path(temporary) / "Documents" / "maya", Path(temporary) / "custom-maya"):
+            cmds.internalVar = lambda **kwargs: str(root) + os.sep
+            with patch.dict(sys.modules, {"maya": maya, "maya.cmds": cmds}), \
+                    patch.object(updater, "_start_worker", side_effect=lambda fn, name: fn()), \
+                    patch.object(updater, "_record_check"), \
+                    patch.object(updater, "query_update", return_value=None), \
+                    patch.object(updater, "_defer", side_effect=lambda fn: fn()), \
+                    patch.object(updater, "_deliver_check") as deliver:
+                try:
+                    updater.check_for_updates(manual=True)
+                    assert Path(deliver.call_args.args[4]) == root.resolve() / "modules"
+                finally:
+                    updater._set_busy(False)
+
+
 def test_path_traversal() -> None:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
@@ -190,5 +214,6 @@ if __name__ == "__main__":
     test_selection()
     test_install()
     test_skill_update()
+    test_check_uses_maya_application_modules()
     test_path_traversal()
     print("MAYA_MCP_UPDATER_TEST_RESULT=passed")

@@ -589,7 +589,8 @@ def check_for_updates(manual: bool = False) -> None:
     generation = _generation
     maya_api_version = int(cmds.about(apiVersion=True))
     user_app = Path(cmds.internalVar(userAppDir=True)).resolve()
-    modules_directory = str(user_app.parent / "modules")
+    # userAppDir is the Maya application root, not the versioned prefs folder.
+    modules_directory = str(user_app / "modules")
     if manual:
         cmds.inViewMessage(
             assistMessage="Checking Maya MCP updates...",
