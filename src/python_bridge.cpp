@@ -128,10 +128,11 @@ void PythonBridge::shutdown() noexcept {
 }
 
 PythonBridge::Json PythonBridge::callTool(
-    const std::string& name, const Json& arguments) const {
+    const std::string& name, const Json& arguments, const std::string& clientSession) const {
     return callEncoded(
         "dispatch_base64",
-        Json{{"name", name}, {"arguments", arguments}},
+        Json{{"name", name}, {"arguments", arguments}, {"_native_undo_group", true},
+             {"_client_session", clientSession}},
         true);
 }
 

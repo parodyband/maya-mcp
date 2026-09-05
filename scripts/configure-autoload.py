@@ -28,6 +28,8 @@ def main() -> None:
             )
         cmds.loadPlugin(str(plugin), quiet=True)
         cmds.pluginInfo("maya_mcp", edit=True, autoload=True)
+        from maya_mcp_runtime import __version__, updater
+        updater.register_client_bridge(plugin.parents[1], __version__)
         print(f"Configured Maya MCP autoload: {plugin}")
     finally:
         maya.standalone.uninitialize()

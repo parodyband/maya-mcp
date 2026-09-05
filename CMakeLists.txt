@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(maya_mcp VERSION 0.5.6 LANGUAGES CXX)
+project(maya_mcp VERSION 0.6.0 LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -138,6 +138,9 @@ add_custom_target(maya_mcp_runtime_package ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/configure-clients.ps1"
         "${CMAKE_BINARY_DIR}/package/maya-mcp/client/Configure-MayaMcpClients.ps1"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/skills"
+        "${CMAKE_BINARY_DIR}/package/maya-mcp/client/skills"
     DEPENDS maya_mcp maya_mcp_bridge ${MAYA_MCP_RUNTIME_SOURCES}
         scripts/start-client-bridge.ps1 scripts/configure-clients.ps1
     COMMENT "Packaging Maya MCP Python runtime"
@@ -145,6 +148,7 @@ add_custom_target(maya_mcp_runtime_package ALL
 install(TARGETS maya_mcp RUNTIME DESTINATION maya-mcp/plug-ins LIBRARY DESTINATION maya-mcp/plug-ins)
 install(TARGETS maya_mcp_bridge RUNTIME DESTINATION maya-mcp/bin)
 install(DIRECTORY python/maya_mcp_runtime DESTINATION maya-mcp/scripts)
+install(DIRECTORY skills DESTINATION maya-mcp/client)
 install(FILES
     scripts/start-client-bridge.ps1
     DESTINATION maya-mcp/client

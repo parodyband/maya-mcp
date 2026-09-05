@@ -333,6 +333,9 @@ def register_client_bridge(installed: Path, version: str) -> Path:
         shutil.copy2(source_bridge, registered_bridge)
     shutil.copy2(source_launcher, client_root / "Start-MayaMcpBridge.ps1")
     shutil.copy2(source_configurator, client_root / "Configure-MayaMcpClients.ps1")
+    source_skills = installed / "client" / "skills"
+    if source_skills.is_dir():
+        shutil.copytree(source_skills, client_root / "skills", dirs_exist_ok=True)
 
     registry_path = client_root / "bridge-installations.json"
     installations: list[dict[str, Any]] = []
@@ -388,6 +391,20 @@ def install_archive_bytes(
         os.replace(staging / folder_name, installed)
 
         registered_bridge = register_client_bridge(installed, update["version"])
+
+        # Update only previously managed skills; never enroll a new client from
+        # a background package update. Older packages may not carry skills.
+        if (installed / "client" / "skills" / "maya-mcp" / "SKILL.md").is_file():
+            import subprocess
+            completed = subprocess.run(
+                ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", str(installed / "client" / "Configure-MayaMcpClients.ps1"),
+                 "-SkillsOnly", "-ExistingSkillsOnly"],
+                capture_output=True, text=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if completed.returncode:
+                raise UpdateError("Package staged but companion-skill update failed; run Configure AI Clients to repair")
 
         major = update["maya_major_version"]
         descriptor = modules / f"maya-mcp-{major}.mod"

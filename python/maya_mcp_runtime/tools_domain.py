@@ -833,16 +833,19 @@ def script_execute(arguments: dict[str, Any], call: state.CallState) -> dict[str
     stderr = _BoundedTextCapture(262144)
     execution_result: Any = None
     execution_started = False
+    sdk = None
+    namespace: dict[str, Any] = {}
+    if arguments.get("session_id") and language != "python":
+        raise state.ToolError("INVALID_ARGUMENT", "session_id is supported only for Python")
+    if language == "python":
+        from . import sessions
+        # Validate ownership and scene lifetime before starting any mutation.
+        namespace, sdk = sessions.begin_cell(arguments.get("session_id"), arguments.get("arguments", {}))
 
     def execute() -> None:
         nonlocal execution_result, execution_started
         execution_started = True
         if language == "python":
-            namespace: dict[str, Any] = {
-                "__name__": "__maya_mcp__",
-                "cmds": cmds,
-                "arguments": {},
-            }
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 exec(compile(source, "<maya-mcp>", "exec"), namespace, namespace)
                 if arguments.get("return_expression"):
@@ -925,6 +928,9 @@ def script_execute(arguments: dict[str, Any], call: state.CallState) -> dict[str
                 "partial_mutation_possible": execution_started,
             },
         ) from error
+    finally:
+        if sdk is not None:
+            sessions.end_cell(sdk)
     state.bump_scene_revision()
     call.changes.append(
         {"kind": "script.executed", "language": language, "sha256": digest}
@@ -932,7 +938,7 @@ def script_execute(arguments: dict[str, Any], call: state.CallState) -> dict[str
     safe_execution_result, result_truncated = _bounded_script_result(
         execution_result
     )
-    return state.result(
+    response = state.result(
         call,
         {
             "language": language,
@@ -942,9 +948,16 @@ def script_execute(arguments: dict[str, Any], call: state.CallState) -> dict[str
             "stderr": stderr.getvalue(),
             "output_truncated": stdout.truncated or stderr.truncated,
             "result_truncated": result_truncated,
+            "session_id": arguments.get("session_id"),
+            "sdk_calls": sdk.calls if sdk is not None else 0,
+            "images": sdk.image_sources if sdk is not None else [],
         },
         f"Executed {language} script {digest[:12]}",
+        image_content=sdk.images if sdk is not None else None,
     )
+    if sdk is not None and sdk.images:
+        response["content"] = sdk.images
+    return response
 
 
 DOMAIN_HANDLERS: dict[str, Callable[[dict[str, Any], state.CallState], dict[str, Any]]] = {

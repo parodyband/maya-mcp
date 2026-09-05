@@ -3,6 +3,14 @@
 A native Maya 2026.3 and Maya 2027 plug-in that gives MCP clients a typed,
 authenticated, and vision-aware interface to Maya.
 
+The development tree now defaults to eight agent-facing tools. `maya.observe`
+combines viewport images and scoped scene facts. Workflow and script calls can
+return post-action observations; persistent Python sessions retain useful state.
+Native request IDs prevent duplicate execution within a live MCP session.
+The full catalog remains available through
+`MAYA_MCP_TOOL_PROFILE=full`. See the [agent architecture review](docs/AGENT_ARCHITECTURE_REVIEW.md)
+for the measured discovery reduction and the next priorities.
+
 Version 0.5 is a working development preview. It includes the native transport,
 Maya main-thread dispatch, scene and rigging tools, native VP2 depth readback,
 vision grounding, resources, prompts, security controls, and isolated batch and
@@ -155,7 +163,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":18,"typed_mutation":"passed","version":"0.5.6"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":25,"typed_mutation":"passed","version":"0.6.0"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -212,6 +220,19 @@ To add a client installed after Maya MCP, or repair its configuration, choose:
 
 **Maya MCP > Configure AI Clients...**
 
+Client configuration also installs the shared `maya-mcp` skill for detected
+Codex and Claude Code clients. Codex uses `~/.agents/skills/maya-mcp`; Claude Code
+uses `~/.claude/skills/maya-mcp` (or `CLAUDE_CONFIG_DIR/skills/maya-mcp`). The skill
+teaches observation, batching, persistent sessions, and outcome recovery. It
+checks available server capabilities and does not require a particular model.
+
+Setup and the PowerShell release installer accept `-SkipSkills` for connection-only
+configuration. Managed skill copies update with packages; local modifications
+and unrelated skills are preserved. **Configure AI Clients** repairs missing
+managed files. Move a customized copy elsewhere before requesting replacement.
+Claude Desktop's MCP Bundle continues to provide the connection and server
+instructions; this installer does not install a Claude Code skill into Desktop.
+
 Restart the AI client after configuration. Open Maya before starting a session
 that needs Maya tools.
 
@@ -263,6 +284,24 @@ $env:MAYA_MCP_TOKEN = 'replace-with-a-long-random-secret'
 Do not commit tokens or place them in shared project files.
 
 ## Tool surface
+
+The default compact profile advertises:
+
+- `maya.observe` — viewport, context, scoped node facts and change cursor.
+- `maya.scene.query` — inspect nodes, attributes and connections with pagination.
+- `maya.scene.changes` — poll bounded change hints for watched nodes.
+- `maya.tools.describe` — find operations or retrieve their exact input schemas.
+- `maya.workflow.run` — compose ordered operations with result references.
+- `maya.script.execute` — run general Maya Python/MEL, with structured Python arguments.
+- `maya.session` — retain Python variables, helpers and validated node handles.
+- `maya.request.status` — recover queued/running/completed/failed requests.
+
+All operations below remain available inside workflow steps. This removes
+specialist schemas from initial discovery without deleting tested capabilities.
+Existing clients that call specialist tools directly should set
+`MAYA_MCP_TOOL_PROFILE=full` before starting Maya. Reload the plug-in and reconnect
+the client after changing profiles. See [workflow examples and failure behavior](docs/API.md#agent-workflows).
+Start with the [observe/act/observe guide](docs/AGENT_LOOP.md) for the fast interaction loop.
 
 ### Core
 

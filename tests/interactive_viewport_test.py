@@ -1012,6 +1012,44 @@ def _run_validation(
             "include_depth": True,
             "depth_max_dimension": 256,
         }
+        workflow, workflow_images = client.call_tool("maya.workflow.run", {"steps": [
+            {"id": "capture", "tool": "maya.viewport.capture", "arguments": {
+                "format": "png", "width": 640, "height": 480},
+             "select": {"resolution": "/data/resolution"}},
+            {"id": "map", "tool": "maya.viewport.scene_map", "arguments": {
+                "width": {"$ref": "capture#/data/resolution/width"},
+                "height": {"$ref": "capture#/data/resolution/height"}, "max_nodes": 10},
+             "select": {"resolution": "/data/resolution"}},
+        ]})
+        _assert(workflow["data"]["completed"] == 2, "Viewport workflow did not complete")
+        _assert(len(workflow_images) == 1, "Viewport workflow lost MCP image content")
+        _assert(all(item["type"] == "image" for item in client.last_tool_result["content"]),
+                "Viewport workflow violated image-only compatibility")
+        _assert(workflow["data"]["steps"][0]["image_content_indices"] == [0],
+                "Workflow image association is missing")
+        _assert(workflow["data"]["steps"][1]["data"]["resolution"]["width"] == 640,
+                "Workflow capture dimensions were not resolved into scene map")
+        checks["viewport_workflow"] = "passed"
+        observed, observed_images = client.call_tool("maya.observe", {
+            "nodes": [scene["target"]], "width": 640, "height": 480})
+        _assert(len(observed_images) == 1, "Combined observation did not include an image")
+        _assert(observed["data"]["coherence"]["unchanged_during_observation"],
+                f"Unexpected changes during stable observation: {observed['data']['coherence']}")
+        _assert(observed["data"]["capture"]["resolution"]["width"] ==
+                observed["data"]["scene_map"]["resolution"]["width"], "Combined observation resolutions differ")
+        selection_before_frame = _main_thread(_selection)
+        feedback, feedback_images = client.call_tool("maya.workflow.run", {
+            "if_observation": observed["data"]["observation_id"],
+            "steps": [{"id": "frame", "tool": "maya.viewport.frame", "arguments": {"nodes": [scene["target"]]}}],
+            "observe": {"nodes": [scene["target"]], "width": 640, "height": 480,
+                        "since": observed["data"]["cursor"]}})
+        _assert(feedback["data"]["observation"]["ok"] and len(feedback_images) == 1,
+                "Post-action observation failed or lost image")
+        _assert(feedback["data"]["observation_image_indices"] == [0], "Feedback image index missing")
+        _assert(_main_thread(_selection) == selection_before_frame, "Framing changed selection")
+        _assert(feedback["undo"]["available"], "Framing did not report undo")
+        client.call_tool("maya.history.apply", {"action": "undo"})
+        checks["combined_observation_feedback"] = "passed"
         native, captures["perspective_native_png"] = _save_capture(
             client,
             evidence_dir,
@@ -1421,15 +1459,15 @@ def _start() -> None:
             f"{runtime_path} (expected below {packaged_scripts})",
         )
         _assert(
-            maya_mcp_runtime.__version__ == "0.5.6",
+            maya_mcp_runtime.__version__ == "0.6.0",
             "Interactive gate imported the wrong Python runtime version: "
             f"{maya_mcp_runtime.__version__}",
         )
         status = json.loads(cmds.mayaMcpStatus())
         _assert(status.get("running") is True, f"Maya MCP did not start: {status}")
         _assert(
-            status.get("version") == "0.5.6",
-            f"Interactive gate expected Maya MCP 0.5.6, got {status.get('version')}",
+            status.get("version") == "0.6.0",
+            f"Interactive gate expected Maya MCP 0.6.0, got {status.get('version')}",
         )
         discovery_path = Path(status["discoveryFile"]).resolve()
         local_app_data = Path(os.environ["LOCALAPPDATA"]).resolve()

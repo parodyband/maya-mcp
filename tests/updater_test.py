@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
@@ -144,6 +145,21 @@ def test_install() -> None:
                 os.environ["LOCALAPPDATA"] = previous_local_app_data
 
 
+def test_skill_update() -> None:
+    payload = io.BytesIO(_archive())
+    with zipfile.ZipFile(payload, "a", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("maya-mcp-0.5.5-maya2027/client/skills/maya-mcp/SKILL.md", "shared skill")
+    raw = payload.getvalue()
+    with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"LOCALAPPDATA": temporary}):
+        with patch("subprocess.run") as run:
+            run.return_value.returncode = 0
+            updater.install_archive_bytes(_metadata(raw), raw, Path(temporary) / "modules")
+            args, kwargs = run.call_args
+            assert args[0][-2:] == ["-SkillsOnly", "-ExistingSkillsOnly"]
+            assert kwargs["timeout"] == 30
+            assert (Path(temporary) / "MayaMCP/client/skills/maya-mcp/SKILL.md").read_text() == "shared skill"
+
+
 def test_path_traversal() -> None:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
@@ -173,5 +189,6 @@ def test_path_traversal() -> None:
 if __name__ == "__main__":
     test_selection()
     test_install()
+    test_skill_update()
     test_path_traversal()
     print("MAYA_MCP_UPDATER_TEST_RESULT=passed")

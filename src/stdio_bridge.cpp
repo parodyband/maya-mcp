@@ -25,6 +25,10 @@ namespace {
 using Json = nlohmann::json;
 
 constexpr std::size_t kMaximumMessageBytes = 8U * 1024U * 1024U;
+// The server permits a 16 MiB result. Its JSON-RPC envelope can also contain
+// a request id as large as the bounded input message.
+constexpr std::size_t kMaximumResponseBytes =
+    16U * 1024U * 1024U + kMaximumMessageBytes + 1024U;
 constexpr std::size_t kMaximumDiscoveryBytes = 64U * 1024U;
 
 struct Discovery {
@@ -261,13 +265,14 @@ private:
             client.set_read_timeout(1, 0);
             httplib::Headers headers{
                 {"Authorization", "Bearer " + discovery_->token},
-                {"MCP-Protocol-Version", discovery_->protocolVersion},
+                {"MCP-Protocol-Version", negotiatedProtocolVersion_},
                 {"MCP-Session-Id", sessionId_},
             };
             (void)client.Delete(discovery_->path, headers);
         } catch (...) {
         }
         sessionId_.clear();
+        negotiatedProtocolVersion_.clear();
     }
 
     void forward(
@@ -285,7 +290,8 @@ private:
         httplib::Headers headers{
             {"Authorization", "Bearer " + discovery_->token},
             {"Accept", "application/json, text/event-stream"},
-            {"MCP-Protocol-Version", discovery_->protocolVersion},
+            {"MCP-Protocol-Version", negotiatedProtocolVersion_.empty()
+                 ? discovery_->protocolVersion : negotiatedProtocolVersion_},
         };
         if (!sessionId_.empty() && method != "initialize") {
             headers.emplace("MCP-Session-Id", sessionId_);
@@ -300,27 +306,50 @@ private:
             throw std::runtime_error(
                 "Could not reach Maya MCP. Confirm Maya is open and the plug-in is loaded.");
         }
-        if (response->status != 200 && response->status != 202) {
+        if (notification && response->status == 202) {
+            return;
+        }
+        if (response->body.size() > kMaximumResponseBytes) {
+            throw std::runtime_error("Maya MCP returned an invalid response size.");
+        }
+        Json payload;
+        try {
+            payload = Json::parse(response->body);
+        } catch (const std::exception&) {
+            if (response->status != 200) {
+                throw std::runtime_error(
+                    "Maya MCP rejected the bridge request with HTTP " +
+                    std::to_string(response->status) + ".");
+            }
+            throw std::runtime_error("Maya MCP returned an invalid JSON response.");
+        }
+        const bool protocolError = payload.is_object() &&
+            payload.contains("jsonrpc") && payload["jsonrpc"] == "2.0" &&
+            payload.contains("error") && payload["error"].is_object() &&
+            payload["error"].contains("code") && payload["error"]["code"].is_number_integer() &&
+            payload["error"].contains("message") && payload["error"]["message"].is_string();
+        if (response->status != 200 && !protocolError) {
             throw std::runtime_error(
                 "Maya MCP rejected the bridge request with HTTP " +
                 std::to_string(response->status) + ".");
         }
-        if (method == "initialize") {
-            sessionId_ = response->get_header_value("MCP-Session-Id");
-            if (!validHeaderValue(sessionId_)) {
+        if (method == "initialize" && !protocolError) {
+            const std::string sessionId = response->get_header_value("MCP-Session-Id");
+            if (!validHeaderValue(sessionId)) {
                 throw std::runtime_error("Maya MCP did not return a valid session id.");
             }
+            if (!payload.is_object() || !payload.contains("result") ||
+                !payload["result"].is_object() ||
+                !payload["result"].contains("protocolVersion") ||
+                !payload["result"]["protocolVersion"].is_string() ||
+                !validHeaderValue(payload["result"]["protocolVersion"].get<std::string>())) {
+                throw std::runtime_error("Maya MCP did not return a valid negotiated protocol version.");
+            }
+            sessionId_ = sessionId;
+            negotiatedProtocolVersion_ = payload["result"]["protocolVersion"].get<std::string>();
         }
-        if (notification || response->status == 202) {
+        if (notification) {
             return;
-        }
-        if (response->body.empty() || response->body.size() > kMaximumMessageBytes) {
-            throw std::runtime_error("Maya MCP returned an invalid response size.");
-        }
-        try {
-            (void)Json::parse(response->body);
-        } catch (const std::exception&) {
-            throw std::runtime_error("Maya MCP returned an invalid JSON response.");
         }
         std::cout << response->body << '\n';
         std::cout.flush();
@@ -329,6 +358,7 @@ private:
     Options options_;
     std::optional<Discovery> discovery_;
     std::string sessionId_;
+    std::string negotiatedProtocolVersion_;
 };
 
 Options parseOptions(const int argc, char** argv) {

@@ -18,9 +18,19 @@ PROTOCOL = "2025-11-25"
 
 class McpHandler(BaseHTTPRequestHandler):
     requests: list[dict[str, object]] = []
+    deletions: list[dict[str, str | None]] = []
+    negotiated_protocol = PROTOCOL
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        type(self).deletions.append({
+            "session": self.headers.get("MCP-Session-Id"),
+            "protocol": self.headers.get("MCP-Protocol-Version"),
+        })
+        self.send_response(204)
+        self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         length = int(self.headers.get("Content-Length", "0"))
@@ -43,11 +53,12 @@ class McpHandler(BaseHTTPRequestHandler):
 
         method = message["method"]
         if method == "initialize":
+            type(self).negotiated_protocol = message["params"]["protocolVersion"]
             response = {
                 "jsonrpc": "2.0",
                 "id": message["id"],
                 "result": {
-                    "protocolVersion": PROTOCOL,
+                    "protocolVersion": type(self).negotiated_protocol,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "maya-mcp-test", "version": "test"},
                 },
@@ -65,6 +76,10 @@ class McpHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
+        if record["protocol"] != type(self).negotiated_protocol:
+            self.send_response(400)
+            self.end_headers()
+            return
         if method == "notifications/initialized":
             self.send_response(202)
             self.end_headers()
@@ -75,8 +90,20 @@ class McpHandler(BaseHTTPRequestHandler):
             "id": message["id"],
             "result": {"tools": [{"name": "maya.context.get"}]},
         }
+        http_status = 200
+        if method == "test/large":
+            # A valid server result larger than the old 8 MiB bridge cap.
+            response["result"] = {"data": "x" * (9 * 1024 * 1024)}
+        elif method == "test/error":
+            response.pop("result")
+            response["error"] = {
+                "code": -32002,
+                "message": "A valid MCP session is required",
+                "data": {"recover": "initialize"},
+            }
+            http_status = 400
         payload = json.dumps(response, separators=(",", ":")).encode()
-        self.send_response(200)
+        self.send_response(http_status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -161,6 +188,41 @@ def main() -> None:
             assert McpHandler.requests[1]["session"] == SESSION
             assert McpHandler.requests[2]["session"] == SESSION
             assert all(item["accept"] == "application/json, text/event-stream" for item in McpHandler.requests)
+
+            for negotiated in ("2025-06-18", "2025-03-26"):
+                McpHandler.requests.clear()
+                McpHandler.deletions.clear()
+                negotiated_messages = json.loads(json.dumps(messages))
+                negotiated_messages[0]["params"]["protocolVersion"] = negotiated
+                negotiated_result = run_command(
+                    [str(bridge), "--discovery-file", str(discovery)], negotiated_messages
+                )
+                negotiated_output = [json.loads(line) for line in negotiated_result.stdout.splitlines() if line]
+                assert negotiated_result.returncode == 0, negotiated_result.stderr
+                assert not negotiated_result.stderr, negotiated_result.stderr
+                assert negotiated_output[0]["result"]["protocolVersion"] == negotiated
+                assert negotiated_output[1]["result"]["tools"], negotiated_output
+                assert all(item["protocol"] == negotiated for item in McpHandler.requests[1:])
+                assert McpHandler.deletions == [{"session": SESSION, "protocol": negotiated}]
+
+            large_result = run_command(
+                [str(bridge), "--discovery-file", str(discovery)],
+                messages[:2] + [{"jsonrpc": "2.0", "id": "large", "method": "test/large"}],
+            )
+            large_output = [json.loads(line) for line in large_result.stdout.splitlines() if line]
+            assert large_result.returncode == 0 and not large_result.stderr, large_result.stderr
+            assert len(large_output[1]["result"]["data"]) == 9 * 1024 * 1024
+
+            error_result = run_command(
+                [str(bridge), "--discovery-file", str(discovery)],
+                messages[:2] + [{"jsonrpc": "2.0", "id": "error", "method": "test/error"}],
+            )
+            error_output = [json.loads(line) for line in error_result.stdout.splitlines() if line]
+            assert error_result.returncode == 0 and not error_result.stderr, error_result.stderr
+            assert error_output[1] == {
+                "jsonrpc": "2.0", "id": "error",
+                "error": {"code": -32002, "message": "A valid MCP session is required", "data": {"recover": "initialize"}},
+            }
 
             unsafe = root / "unsafe.json"
             unsafe.write_text(

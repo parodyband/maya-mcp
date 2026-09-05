@@ -384,11 +384,39 @@ public:
     }
 
 private:
+    struct RecoveryBudget {
+        std::mutex mutex;
+        // Serialized fingerprints/results, globally bounded across live sessions.
+        // Active records reserve a full response; terminal records shrink on read.
+        std::size_t bytes{0};
+        std::size_t count{0};
+    };
+    struct RequestRecord {
+        std::mutex mutex;
+        std::string fingerprint;
+        std::string state{"queued"};
+        std::shared_future<Json> future;
+        Json result;
+        std::shared_ptr<RecoveryBudget> budget;
+        std::size_t reserved{0};
+        ~RequestRecord() {
+            if (budget) {
+                std::lock_guard lock(budget->mutex);
+                budget->bytes -= reserved;
+                --budget->count;
+            }
+        }
+    };
+    struct RequestCache {
+        std::mutex mutex;
+        std::unordered_map<std::string, std::shared_ptr<RequestRecord>> records;
+    };
     struct Session {
         std::string protocolVersion;
         bool initialized{false};
         std::chrono::steady_clock::time_point lastSeen{
             std::chrono::steady_clock::now()};
+        std::shared_ptr<RequestCache> requests{std::make_shared<RequestCache>()};
     };
 
     void installRoutes() {
@@ -598,7 +626,7 @@ private:
                 response,
                 jsonRpcResult(id, {{"tools", bridge_.catalog()["tools"]}}));
         } else if (method == "tools/call") {
-            handleToolCall(id, params, response);
+            handleToolCall(id, params, sessionId, session.requests, response);
         } else if (method == "resources/list") {
             writeJson(
                 response,
@@ -697,8 +725,82 @@ private:
         writeJson(response, jsonRpcResult(id, std::move(result)));
     }
 
+    static Json boundedToolResult(Json result) {
+        if (!result.is_object() || !result.contains("content") || !result["content"].is_array() ||
+            (result.contains("isError") && !result["isError"].is_boolean())) {
+            return toolFailure("INVALID_TOOL_RESULT", "The Maya tool returned an invalid MCP result");
+        }
+        constexpr std::size_t trackedLimit = 15U * 1024U * 1024U;
+        if (result.dump().size() > trackedLimit) {
+            return toolFailure("TOOL_RESPONSE_TOO_LARGE", "The Maya tool result exceeded the 15 MiB recoverable response budget",
+                               {{"maximum_bytes", trackedLimit}});
+        }
+        return result;
+    }
+
+    static void refreshRequest(RequestRecord& record) {
+        if (!record.result.is_null() || !record.future.valid() ||
+            record.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return;
+        }
+        try {
+            record.result = boundedToolResult(record.future.get());
+        } catch (const std::exception& exception) {
+            record.result = toolFailure("MAYA_EXECUTION_ERROR", exception.what());
+        }
+        record.future = {};
+        record.state = record.result.value("isError", false) ? "failed" : "completed";
+        const std::size_t used = record.fingerprint.size() + record.result.dump().size();
+        std::lock_guard lock(record.budget->mutex);
+        record.budget->bytes -= record.reserved - used;
+        record.reserved = used;
+    }
+
+    static Json requestStatus(const std::string& requestId, RequestRecord& record) {
+        refreshRequest(record);
+        Json data{{"request_id", requestId}, {"state", record.state},
+                  {"result_available", !record.result.is_null()}};
+        Json images = Json::array();
+        if (!record.result.is_null()) {
+            data["result"] = record.result;
+            // Keep replay byte-for-byte equivalent, but expose recovered images
+            // where MCP hosts render them without serializing each image twice.
+            Json remaining = Json::array();
+            for (const auto& item : record.result["content"]) {
+                if (item.is_object() && item.contains("type") && item["type"] == "image") {
+                    images.push_back(item);
+                } else {
+                    remaining.push_back(item);
+                }
+            }
+            if (!images.empty()) {
+                data["result"]["content"] = std::move(remaining);
+                data["result_content"] = "images_at_top_level";
+                data["image_content_indices"] = Json::array();
+                for (std::size_t index = 0; index < images.size(); ++index) {
+                    data["image_content_indices"].push_back(index);
+                }
+            }
+        }
+        Json result = toolFailure("", "Request " + record.state);
+        auto& structured = result["structuredContent"];
+        structured["ok"] = true;
+        structured["request_id"] = requestId;
+        structured["data"] = std::move(data);
+        structured.erase("error");
+        result["isError"] = false;
+        result["content"][0]["text"] = "Request " + requestId + ": " + record.state +
+            (record.result.is_null() ? ". Query maya.request.status for the outcome." : ". Original result is in structuredContent.data.result.");
+        if (!images.empty()) {
+            result["content"] = std::move(images);
+        }
+        return result;
+    }
+
     void handleToolCall(
-        const Json& id, const Json& params, httplib::Response& response) {
+        const Json& id, const Json& params, const std::string& clientSession,
+        const std::shared_ptr<RequestCache>& cache,
+        httplib::Response& response) {
         if (!params.is_object() || !params.contains("name") ||
             !params["name"].is_string()) {
             writeJson(
@@ -712,6 +814,69 @@ private:
             writeJson(
                 response,
                 jsonRpcError(id, -32602, "Tool arguments must be an object"));
+            return;
+        }
+
+        const bool statusCall = name == "maya.request.status";
+        const bool tracked = (name == "maya.workflow.run" || name == "maya.script.execute") &&
+                             arguments.contains("request_id");
+        if (statusCall || tracked) {
+            if (statusCall && arguments.size() != 1U) {
+                writeJson(response, jsonRpcResult(id, toolFailure("INVALID_ARGUMENT", "request.status accepts only request_id")));
+                return;
+            }
+            if (!arguments.contains("request_id") || !arguments["request_id"].is_string() ||
+                arguments["request_id"].get_ref<const std::string&>().empty() ||
+                arguments["request_id"].get_ref<const std::string&>().size() > 128U) {
+                writeJson(response, jsonRpcResult(id, toolFailure("INVALID_REQUEST_ID", "request_id must be a nonempty string of at most 128 bytes")));
+                return;
+            }
+            const std::string requestId = arguments["request_id"].get<std::string>();
+            const std::string fingerprint = statusCall ? "" : Json{{"name", name}, {"arguments", arguments}}.dump();
+            std::lock_guard cacheLock(cache->mutex);
+            const auto existing = cache->records.find(requestId);
+            if (existing != cache->records.end()) {
+                std::lock_guard recordLock(existing->second->mutex);
+                auto& record = *existing->second;
+                if (!statusCall && record.fingerprint != fingerprint) {
+                    writeJson(response, jsonRpcResult(id, toolFailure("REQUEST_ID_CONFLICT", "request_id already belongs to different tool arguments")));
+                    return;
+                }
+                refreshRequest(record);
+                writeJson(response, jsonRpcResult(id, !statusCall && !record.result.is_null()
+                    ? record.result : requestStatus(requestId, record)));
+                return;
+            }
+            if (statusCall) {
+                writeJson(response, jsonRpcResult(id, toolFailure("REQUEST_NOT_FOUND", "No request with this ID exists in this MCP session")));
+                return;
+            }
+            // Never discard a live-session ID: refusing before enqueue is safer
+            // than evicting an old ID and accidentally executing its replay.
+            const std::size_t reservation = fingerprint.size() + kMaxSerializedResultBytes;
+            auto record = std::make_shared<RequestRecord>();
+            {
+                std::lock_guard budgetLock(recoveryBudget_->mutex);
+                if (recoveryBudget_->count >= 1024U || reservation > 128U * 1024U * 1024U - recoveryBudget_->bytes) {
+                    writeJson(response, jsonRpcResult(id, toolFailure("REQUEST_CACHE_FULL", "Recovery cache capacity is exhausted; request was not queued. Retrieve pending results or close completed sessions.")));
+                    return;
+                }
+                recoveryBudget_->bytes += reservation;
+                ++recoveryBudget_->count;
+                record->budget = recoveryBudget_;
+                record->reserved = reservation;
+            }
+            record->fingerprint = fingerprint;
+            cache->records.emplace(requestId, record);
+            std::lock_guard recordLock(record->mutex);
+            record->future = dispatcher_.submit([this, name, arguments, record, clientSession]() {
+                {
+                    std::lock_guard lock(record->mutex);
+                    record->state = "running";
+                }
+                return boundedToolResult(bridge_.callTool(name, arguments, clientSession));
+            }).share();
+            writeJson(response, jsonRpcResult(id, requestStatus(requestId, *record)));
             return;
         }
 
@@ -729,8 +894,8 @@ private:
 
         try {
             auto future = dispatcher_.submit(
-                [this, name, arguments]() {
-                    return bridge_.callTool(name, arguments);
+                [this, name, arguments, clientSession]() {
+                    return bridge_.callTool(name, arguments, clientSession);
                 });
             Json toolResult = future.get();
             if (!toolResult.is_object() || !toolResult.contains("content")) {
@@ -887,6 +1052,7 @@ private:
     mutable std::mutex lifecycleMutex_;
     mutable std::mutex sessionsMutex_;
     std::unordered_map<std::string, Session> sessions_;
+    std::shared_ptr<RecoveryBudget> recoveryBudget_{std::make_shared<RecoveryBudget>()};
     std::unique_ptr<httplib::Server> http_;
     std::thread listener_;
     std::atomic<bool> running_{false};

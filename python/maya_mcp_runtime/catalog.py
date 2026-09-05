@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import copy
+import os
 from typing import Any
 
 JSON_SCHEMA = "https://json-schema.org/draft/2020-12/schema"
@@ -213,6 +214,20 @@ RIG_PREVIEW_CONTROL = {
 }
 
 
+OBSERVATION_INPUT = _object({
+    "image": {"type": "boolean", "default": True},
+    "width": {"type": "integer", "minimum": 64, "maximum": 1024, "default": 960},
+    "height": {"type": "integer", "minimum": 64, "maximum": 1024, "default": 540},
+    "nodes": {"type": "array", "items": NODE_SELECTOR, "maxItems": 100},
+    "attributes": {"type": "array", "items": {"type": "string", "maxLength": 128}, "maxItems": 32},
+    "max_nodes": {"type": "integer", "minimum": 1, "maximum": 100, "default": 40},
+    "include_depth": {"type": "boolean", "default": False},
+    "since": {"type": "string", "maxLength": 2048},
+})
+REQUEST_ID = {"type": "string", "minLength": 1, "maxLength": 128,
+              "description": "Native session-scoped replay key. Returns queued immediately; poll maya.request.status. Never reuse with different inputs."}
+
+
 TOOLS = [
     _tool(
         "maya.context.get",
@@ -256,6 +271,7 @@ TOOLS = [
                     "maximum": 1000,
                     "default": 200,
                 },
+                "cursor": {"type": "string", "maxLength": 2048},
             }
         ),
         read_only=True,
@@ -898,6 +914,11 @@ TOOLS = [
                 "language": {"type": "string", "enum": ["python", "mel"]},
                 "source": {"type": "string", "minLength": 1, "maxLength": 1000000},
                 "return_expression": {"type": "string"},
+                "arguments": {"type": "object", "description": "JSON values exposed as arguments in Python; avoids interpolating data into source."},
+                "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "request_id": REQUEST_ID,
+                "observe": OBSERVATION_INPUT,
+                "if_observation": {"type": "string", "maxLength": 128},
                 "undo": {"type": "string", "enum": ["none", "chunk"], "default": "none"},
                 "label": {"type": "string", "maxLength": 120},
             },
@@ -908,6 +929,67 @@ TOOLS = [
         open_world=True,
     ),
 ]
+
+
+TOOLS.extend([
+    _tool(
+        "maya.tools.describe",
+        "Discover Maya Operations",
+        "List available operations by query, or fetch exact input schemas by names. "
+        "Call unlisted operations through maya.workflow.run. Empty input lists compact summaries.",
+        _object({
+            "query": {"type": "string", "maxLength": 200},
+            "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 8},
+        }),
+        read_only=True,
+        idempotent=True,
+    ),
+    _tool(
+        "maya.workflow.run",
+        "Run a Maya Workflow",
+        "Run up to 32 ordered tool steps in one main-thread dispatch. Discover schemas "
+        "with maya.tools.describe. Arguments may reference earlier structured results: "
+        '{"$ref":"create#/data/transform"}. Stops on first failure; completed steps remain '
+        "applied. Maya groups recorded edits into one request-level undo item. "
+        "This is not an atomic transaction. "
+        "Use select to return only needed JSON Pointer fields. Capture images remain MCP images.",
+        _object({
+            "steps": {
+                "type": "array", "minItems": 1, "maxItems": 32,
+                "items": _object({
+                    "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"},
+                    "tool": {"type": "string"},
+                    "arguments": {"type": "object"},
+                    "select": {"type": "object", "maxProperties": 32,
+                               "additionalProperties": {"type": "string", "maxLength": 512},
+                               "description": "Output name to JSON Pointer into the step's structured result. Empty object suppresses data."},
+                }, ["id", "tool"]),
+            },
+            "if_scene_epoch": {"type": "string"},
+            "if_scene_revision": {"type": "integer", "minimum": 0},
+            "request_id": REQUEST_ID,
+            "observe": {**OBSERVATION_INPUT, "description": "Post-action observation. May reference earlier workflow steps using $ref. Returned even after a step fails; failure to observe never reruns edits."},
+            "if_observation": {"type": "string", "maxLength": 128},
+        }, ["steps"]),
+        read_only=False,
+        destructive=True,
+        open_world=True,
+    ),
+])
+
+
+TOOLS.extend([
+    _tool("maya.observe", "Observe Maya", "Return context, scoped node facts, viewport image and scene map in one dispatch. Includes an observation ID and bounded change cursor; flags detectable changes during capture. Scoped observers are not a complete scene snapshot.",
+          OBSERVATION_INPUT, read_only=True, idempotent=True),
+    _tool("maya.scene.changes", "Read Maya Changes", "Poll bounded scoped change hints since a cursor. Overflow, reset or lost coverage requires a fresh observation. Attribute coverage is limited to watched nodes, excluding evaluated/playback changes.",
+          _object({"cursor": {"type": "string", "maxLength": 2048}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200}}), read_only=True, idempotent=True),
+    _tool("maya.session", "Manage Python Session", "Open, inspect, reset or close a persistent Python namespace owned by this MCP client. Pass session_id to script.execute. Scene replacement invalidates sessions and handles. Python retains full Maya privileges.",
+          _object({"action": {"type": "string", "enum": ["open", "status", "reset", "close"]}, "session_id": {"type": "string", "minLength": 1, "maxLength": 128}}, ["action"]), read_only=False),
+    _tool("maya.request.status", "Recover Maya Request", "Read native queued/running/completed/failed status for a request_id in this MCP session. Completed results are bounded and may expire; never resubmit an expired ID as new work.",
+          _object({"request_id": REQUEST_ID}, ["request_id"]), read_only=True, idempotent=True),
+    _tool("maya.viewport.frame", "Frame Maya Nodes", "Fit the active camera to explicit nodes without changing selection. Returns camera identity; use workflow observe for the refreshed image.",
+          _object({"nodes": {"type": "array", "items": NODE_SELECTOR, "minItems": 1, "maxItems": 100}, "fit_factor": {"type": "number", "minimum": 0.1, "maximum": 1, "default": 0.8}}, ["nodes"]), read_only=False),
+])
 
 
 RESOURCES = [
@@ -924,14 +1006,14 @@ PROMPTS = [
         "title": "Inspect the Maya Viewport",
         "description": "Visually inspect the current viewport and correlate it with scene structure.",
         "arguments": [{"name": "goal", "description": "What to inspect or diagnose.", "required": True}],
-        "_message": "Inspect Maya for this goal: {{goal}}. First read maya://context and maya://scene/summary. Call maya.viewport.capture with include_depth=true, then maya.viewport.scene_map at the same resolution. Ground color with projected boxes and canonical nodes; treat depth row orientation as experimental, confirm ambiguous overlaps with maya.viewport.pick, and report uncertainty before making edits.",
+        "_message": "Inspect Maya for this goal: {{goal}}. Discover scene_map and pick schemas with maya.tools.describe. Combine context, viewport.capture and viewport.scene_map in maya.workflow.run, using the same image resolution. Request depth only when needed for the goal. Ground color with projected boxes and canonical nodes; treat depth row orientation as experimental, confirm ambiguous overlaps with a pick step, and report uncertainty before making edits.",
     },
     {
         "name": "maya.rig.from_landmarks",
         "title": "Build a Rig from Visual Landmarks",
         "description": "Plan and build a joint/control setup from visible landmarks.",
         "arguments": [{"name": "goal", "description": "Rig type and desired behavior.", "required": True}],
-        "_message": "Build this rig: {{goal}}. Inspect the mesh and existing rig, capture useful views with depth, and ground landmarks with maya.viewport.scene_map plus maya.viewport.pick. Create the proposed joints and controls with maya.rig.preview, review and update the transient preview visually, then call accept with the latest handle and scene revision only after the layout is approved. Skin only after acceptance; keep permanent edits undoable and use explicit names.",
+        "_message": "Build this rig: {{goal}}. Discover rig and viewport schemas with maya.tools.describe and invoke them as maya.workflow.run steps. Inspect the mesh and existing rig, capture useful views, and ground landmarks with scene_map and pick. Request depth only when needed. Create the proposed joints and controls with maya.rig.preview, review and update the transient preview visually, then call accept with the latest handle and scene revision only after the layout is approved. Skin only after acceptance; keep permanent edits undoable and use explicit names.",
     },
     {
         "name": "maya.scene.audit",
@@ -945,9 +1027,21 @@ PROMPTS = [
 
 CATALOG = {
     "instructions": (
-        "Inspect context before editing. Prefer canonical node references and typed "
-        "tools. Make small undoable changes, verify them structurally and visually, "
-        "and use maya.script.execute only when the typed API cannot express the task."
+        "Start with maya.observe for a viewport and scoped scene facts. Request observe on "
+        "workflow.run or script.execute to receive post-action verification in the same request. "
+        "Use if_observation to reject detectably stale input. Open maya.session for persistent "
+        "Python variables and the maya.call/observe/node/keep/get SDK. Poll scene.changes for "
+        "scoped change hints; refresh observation after coverage gaps. Assign request_id to "
+        "workflow/script calls for native queued execution and recover via maya.request.status; "
+        "keep the same MCP session. Expired results do not authorize repeating mutations. "
+        "Discover operation schemas with maya.tools.describe; "
+        "all operations, including those absent from tools/list, are available as steps in "
+        "maya.workflow.run. Combine related reads, edits and verification in one workflow; "
+        "pass canonical nodes between steps with $ref and select only needed outputs. "
+        "Workflows stop on error and retain completed edits; each edit has its own undo policy. "
+        "Use maya.node.apply inside a step for transactional graph edits. For general Maya "
+        "Python/MEL work, use maya.script.execute with JSON arguments and a bounded result. "
+        "Verify edits structurally and visually. Never blindly retry a timed-out mutation."
     ),
     "tools": TOOLS,
     "resources": RESOURCES,
@@ -956,4 +1050,16 @@ CATALOG = {
 
 
 def catalog_json() -> str:
-    return json.dumps(CATALOG, ensure_ascii=True, separators=(",", ":"))
+    # Keep one complete registry internally. The compact startup profile changes
+    # discovery only; workflow dispatch still validates against every schema.
+    profile = os.getenv("MAYA_MCP_TOOL_PROFILE", "compact").lower()
+    if profile not in {"compact", "full"}:
+        raise ValueError("MAYA_MCP_TOOL_PROFILE must be compact or full")
+    compact_names = {
+        "maya.observe", "maya.scene.query", "maya.scene.changes", "maya.session",
+        "maya.tools.describe", "maya.workflow.run", "maya.script.execute", "maya.request.status",
+    }
+    catalog = {**CATALOG, "tools": [
+        tool for tool in TOOLS if profile == "full" or tool["name"] in compact_names
+    ]}
+    return json.dumps(catalog, ensure_ascii=True, separators=(",", ":"))

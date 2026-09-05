@@ -13,7 +13,8 @@ public:
     bool initialize(std::string& error);
     void shutdown() noexcept;
     [[nodiscard]] const Json& catalog() const noexcept { return catalog_; }
-    [[nodiscard]] Json callTool(const std::string& name, const Json& arguments) const;
+    [[nodiscard]] Json callTool(const std::string& name, const Json& arguments,
+                                const std::string& clientSession = "") const;
     [[nodiscard]] Json readResource(const std::string& uri) const;
 
 private:

@@ -3,7 +3,8 @@ param(
     [string]$ModulesDirectory = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya\modules'),
     [string]$MayaLocation = '',
     [switch]$AllowMayaRunning,
-    [switch]$SkipClientConfiguration
+    [switch]$SkipClientConfiguration,
+    [switch]$SkipSkills
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,6 +102,7 @@ if (-not (Test-Path -LiteralPath $registeredBridge -PathType Leaf)) {
 $stableLauncher = Join-Path $clientRoot 'Start-MayaMcpBridge.ps1'
 Copy-Item -LiteralPath $installedLauncher -Destination $stableLauncher -Force
 Copy-Item -LiteralPath $installedConfigurator -Destination (Join-Path $clientRoot 'Configure-MayaMcpClients.ps1') -Force
+Copy-Item -LiteralPath (Join-Path $installedFolder 'client\skills') -Destination $clientRoot -Recurse -Force
 
 $registryPath = Join-Path $clientRoot 'bridge-installations.json'
 $records = @()
@@ -148,7 +150,7 @@ Write-Host "Maya MCP $version for Maya $target is installed." -ForegroundColor G
 Write-Host "Installed for this Windows user at $installedFolder"
 if (-not $SkipClientConfiguration -and $env:MAYA_MCP_INSTALLER_SKIP_CLIENT_CONFIGURATION -ne '1') {
     try {
-        & $installedConfigurator -LauncherPath $stableLauncher
+        & $installedConfigurator -LauncherPath $stableLauncher -SkipSkills:$SkipSkills
     } catch {
         Write-Warning "The Maya plug-in is installed, but automatic AI client configuration failed: $($_.Exception.Message)"
         Write-Warning 'Open Maya MCP > Configure AI Clients after checking that Codex or Claude Code is installed.'

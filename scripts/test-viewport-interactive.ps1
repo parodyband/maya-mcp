@@ -49,6 +49,7 @@ $childEnvironment['LOCALAPPDATA'] = $localAppData
 $childEnvironment['MAYA_MODULE_PATH'] = $packageRoot
 $childEnvironment['PYTHONPATH'] = $testsPath
 $childEnvironment['MAYA_MCP_ALLOW_UNSAFE_CODE'] = '0'
+$childEnvironment['MAYA_MCP_TOOL_PROFILE'] = 'full'
 $childEnvironment['MAYA_MCP_VIEWPORT_EVIDENCE_DIR'] = $evidenceDir
 $childEnvironment['MAYA_MCP_VIEWPORT_RESULT'] = $resultPath
 $childEnvironment['MAYA_MCP_VIEWPORT_TIMEOUT_SECONDS'] = [string]$TimeoutSeconds

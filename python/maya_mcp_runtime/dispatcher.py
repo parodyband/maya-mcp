@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from collections import Counter
 from typing import Any
@@ -17,6 +18,9 @@ from .tools_domain import DOMAIN_HANDLERS
 from .tools_rig_preview import RIG_PREVIEW_HANDLERS
 from .tools_vision import VISION_HANDLERS
 from .tools_viewport import VIEWPORT_HANDLERS
+from .tools_workflow import WORKFLOW_HANDLERS
+from .tools_observation import OBSERVATION_HANDLERS, attach_feedback, require_observation
+from .sessions import session_tool
 
 HANDLERS = {
     **CORE_HANDLERS,
@@ -24,6 +28,9 @@ HANDLERS = {
     **RIG_PREVIEW_HANDLERS,
     **VISION_HANDLERS,
     **VIEWPORT_HANDLERS,
+    **WORKFLOW_HANDLERS,
+    **OBSERVATION_HANDLERS,
+    "maya.session": session_tool,
 }
 TOOL_DEFINITIONS = {tool["name"]: tool for tool in CATALOG["tools"]}
 _PUMP_INTERVAL_MS = 10
@@ -92,13 +99,19 @@ def _type_matches(value: Any, expected: str) -> bool:
     return True
 
 
-def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
+def _validate(
+    value: Any, schema: dict[str, Any], path: str = "$", *, references: bool = False
+) -> None:
+    if references and isinstance(value, dict) and set(value) == {"$ref"}:
+        # Workflow preflight validates reference syntax/order separately. The
+        # resolved value must pass the complete schema again before execution.
+        return
     if "oneOf" in schema:
         errors = []
         matches = 0
         for option in schema["oneOf"]:
             try:
-                _validate(value, option, path)
+                _validate(value, option, path, references=references)
                 matches += 1
             except state.ToolError as error:
                 errors.append(str(error))
@@ -108,7 +121,6 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
                 f"{path} must match exactly one allowed shape",
                 {"errors": errors},
             )
-        return
     if "const" in schema and value != schema["const"]:
         raise state.ToolError("INVALID_ARGUMENT", f"{path} must equal {schema['const']!r}")
     if "enum" in schema and value not in schema["enum"]:
@@ -127,7 +139,7 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
         matches = 0
         for option in schema["anyOf"]:
             try:
-                _validate(value, option, path)
+                _validate(value, option, path, references=references)
                 matches += 1
             except state.ToolError as error:
                 errors.append(str(error))
@@ -156,11 +168,13 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
             )
         for key, item in value.items():
             if key in properties:
-                _validate(item, properties[key], f"{path}.{key}")
+                _validate(item, properties[key], f"{path}.{key}", references=references)
             elif isinstance(additional, dict):
-                _validate(item, additional, f"{path}.{key}")
+                _validate(item, additional, f"{path}.{key}", references=references)
         if len(value) < int(schema.get("minProperties", 0)):
             raise state.ToolError("INVALID_ARGUMENT", f"{path} has too few fields")
+        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
+            raise state.ToolError("INVALID_ARGUMENT", f"{path} has too many fields")
     if isinstance(value, list):
         if len(value) < int(schema.get("minItems", 0)):
             raise state.ToolError("INVALID_ARGUMENT", f"{path} has too few items")
@@ -168,7 +182,11 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
             raise state.ToolError("INVALID_ARGUMENT", f"{path} has too many items")
         if isinstance(schema.get("items"), dict):
             for index, item in enumerate(value):
-                _validate(item, schema["items"], f"{path}[{index}]")
+                _validate(item, schema["items"], f"{path}[{index}]", references=references)
+        if schema.get("uniqueItems"):
+            keys = [json.dumps(item, sort_keys=True) for item in value]
+            if len(set(keys)) != len(keys):
+                raise state.ToolError("INVALID_ARGUMENT", f"{path} must contain unique items")
     if isinstance(value, str):
         if len(value) < int(schema.get("minLength", 0)):
             raise state.ToolError("INVALID_ARGUMENT", f"{path} is too short")
@@ -180,6 +198,8 @@ def _validate(value: Any, schema: dict[str, Any], path: str = "$") -> None:
                 f"{path} does not match the required pattern",
             )
     if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise state.ToolError("INVALID_ARGUMENT", f"{path} must be finite")
         if "minimum" in schema and value < schema["minimum"]:
             raise state.ToolError("INVALID_ARGUMENT", f"{path} is below its minimum")
         if "maximum" in schema and value > schema["maximum"]:
@@ -201,18 +221,43 @@ def _decode(encoded: str) -> dict[str, Any]:
     return payload
 
 
-def dispatch_base64(encoded: str) -> str:
+def invoke_tool(
+    name: str, arguments: dict[str, Any], *, native_undo_group: bool = False
+) -> dict[str, Any]:
+    """One validated execution seam for native calls and workflow steps."""
     call = state.begin_call()
+    call.native_undo_group = native_undo_group
     try:
-        payload = _decode(encoded)
-        name = payload.get("name")
-        arguments = payload.get("arguments", {})
-        if name not in TOOL_DEFINITIONS or name not in HANDLERS:
+        if not isinstance(name, str) or name not in TOOL_DEFINITIONS or name not in HANDLERS:
             raise state.ToolError("TOOL_NOT_FOUND", f"Unknown Maya MCP tool: {name}")
-        _validate(arguments, TOOL_DEFINITIONS[name]["inputSchema"])
+        # Workflow feedback references are validated and resolved by its runner.
+        checked = ({**arguments, "observe": {}} if name == "maya.workflow.run"
+                   and isinstance(arguments, dict) and "observe" in arguments else arguments)
+        _validate(checked, TOOL_DEFINITIONS[name]["inputSchema"])
+        if name in {"maya.workflow.run", "maya.script.execute"} and "if_observation" in arguments:
+            require_observation(arguments["if_observation"])
         response = HANDLERS[name](arguments, call)
     except Exception as error:
         response = state.failure(call, error)
+    # Do not observe malformed or rejected calls that never entered execution.
+    if (name == "maya.script.execute" and isinstance(arguments, dict)
+            and "observe" in arguments and (response["structuredContent"]["ok"] or call.mutation_started)):
+        response = attach_feedback(response, arguments["observe"])
+    return response
+
+
+def dispatch_base64(encoded: str) -> str:
+    try:
+        payload = _decode(encoded)
+    except Exception as error:
+        response = state.failure(state.begin_call(), error)
+    else:
+        token = state._client_session.set(payload.get("_client_session") or "local-python")
+        try:
+            response = invoke_tool(payload.get("name"), payload.get("arguments", {}),
+                                   native_undo_group=payload.get("_native_undo_group") is True)
+        finally:
+            state._client_session.reset(token)
     return json.dumps(response, ensure_ascii=True, separators=(",", ":"))
 
 

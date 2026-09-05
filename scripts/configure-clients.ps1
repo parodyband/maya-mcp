@@ -2,7 +2,12 @@
 param(
     [string]$LauncherPath = '',
     [switch]$SkipCodex,
-    [switch]$SkipClaudeCode
+    [switch]$SkipClaudeCode,
+    [switch]$SkipSkills,
+    [switch]$SkillsOnly,
+    [switch]$ExistingSkillsOnly,
+    [string]$SkillSource = '',
+    [string]$AgentHome = ([Environment]::GetFolderPath('UserProfile'))
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +20,7 @@ if (-not $LauncherPath) {
     $LauncherPath = Join-Path $base 'client\Start-MayaMcpBridge.ps1'
 }
 $LauncherPath = [System.IO.Path]::GetFullPath($LauncherPath)
-if (-not (Test-Path -LiteralPath $LauncherPath -PathType Leaf)) {
+if (-not $SkillsOnly -and -not (Test-Path -LiteralPath $LauncherPath -PathType Leaf)) {
     throw "Maya MCP client launcher not found: $LauncherPath"
 }
 
@@ -32,6 +37,54 @@ $bridgeCommand = @(
 )
 $configured = @()
 $unavailable = @()
+
+if (-not $SkillSource) {
+    $SkillSource = Join-Path $PSScriptRoot 'skills\maya-mcp'
+    if (-not (Test-Path -LiteralPath $SkillSource)) {
+        $SkillSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills\maya-mcp'
+    }
+}
+
+function Install-MayaSkill([string]$Root) {
+    if ($SkipSkills) { return }
+    $destination = Join-Path $Root 'maya-mcp'
+    $target = Join-Path $destination 'SKILL.md'
+    $receipt = Join-Path $destination '.maya-mcp-install.json'
+    if ($ExistingSkillsOnly -and -not (Test-Path -LiteralPath $receipt -PathType Leaf)) { return }
+    $source = Join-Path $SkillSource 'SKILL.md'
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Maya skill source missing: $source" }
+    # Never follow a redirected skill directory/file or replace an unowned skill.
+    foreach ($path in @($destination, $target, $receipt)) {
+        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            Write-Warning "Preserving redirected skill path: $path"; return
+        }
+    }
+    if (Test-Path -LiteralPath $destination) {
+        try {
+            $previous = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+            if ($previous.owner -ne 'maya-mcp' -or $previous.schema_version -ne 1) { throw 'Unowned skill' }
+            if ((Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $previous.sha256) {
+                throw 'Locally modified skill'
+            }
+        } catch {
+            Write-Warning "Preserving existing skill at $destination. Move your custom copy before repairing this managed skill."; return
+        }
+    }
+    $digest = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $target -Force
+    [ordered]@{ owner = 'maya-mcp'; schema_version = 1; sha256 = $digest } |
+        ConvertTo-Json | Set-Content -LiteralPath $receipt -Encoding UTF8
+    Write-Host "Installed Maya skill: $target"
+}
+
+$codexSkills = Join-Path $AgentHome '.agents\skills'
+$claudeSkills = if ($env:CLAUDE_CONFIG_DIR) { Join-Path $env:CLAUDE_CONFIG_DIR 'skills' } else { Join-Path $AgentHome '.claude\skills' }
+if ($SkillsOnly) {
+    if (-not $SkipCodex) { Install-MayaSkill $codexSkills }
+    if (-not $SkipClaudeCode) { Install-MayaSkill $claudeSkills }
+    return
+}
 
 function Invoke-McpClientCommand {
     param(
@@ -74,6 +127,7 @@ if (-not $SkipCodex) {
             'mcp', 'add', $serverName, '--'
         ) + $bridgeCommand) -Label 'Codex MCP registration')
         $configured += 'Codex'
+        Install-MayaSkill $codexSkills
     } else {
         $unavailable += 'Codex'
     }
@@ -89,6 +143,7 @@ if (-not $SkipClaudeCode) {
             'mcp', 'add', '--transport', 'stdio', '--scope', 'user', $serverName, '--'
         ) + $bridgeCommand) -Label 'Claude Code MCP registration')
         $configured += 'Claude Code'
+        Install-MayaSkill $claudeSkills
     } else {
         $unavailable += 'Claude Code'
     }

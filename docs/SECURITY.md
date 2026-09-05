@@ -103,6 +103,13 @@ $env:MAYA_MCP_ALLOW_UNSAFE_CODE = '0'
 The response records a SHA-256 hash of executed source and caps captured output.
 A complete append-only audit log is planned.
 
+Persistent Python sessions use the same execution gate and host privileges.
+Their namespaces are not sandboxes or general memory limits. Session tokens and
+observation tokens are bound to the authenticated MCP client and current scene.
+Tracked request results are bounded and belong to one live MCP session; closing
+that session clears recovery access but does not cancel already queued work.
+See [agent-loop limits and recovery semantics](AGENT_LOOP.md).
+
 ## Tool risk classes
 
 | Class | Examples | Default behavior |

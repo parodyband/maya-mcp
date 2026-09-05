@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from contextvars import ContextVar
 import fnmatch
 import hashlib
 import json
@@ -24,6 +25,11 @@ _last_scene_signature: tuple[Any, ...] | None = None
 _callback_ids: list[int] = []
 _lifecycle_cleanup_hooks: list[Callable[[str], None]] = []
 SELECTION_RESULT_LIMIT = 500
+_client_session: ContextVar[str] = ContextVar("maya_mcp_client_session", default="local-python")
+
+
+def current_client_session() -> str:
+    return _client_session.get()
 
 
 class ToolError(RuntimeError):
@@ -49,6 +55,8 @@ class CallState:
     undo_label: str = ""
     mutation_started: bool = False
     rolled_back: bool = False
+    native_undo_group: bool = False
+    client_session: str = "local-python"
 
 
 def begin_call() -> CallState:
@@ -59,6 +67,7 @@ def begin_call() -> CallState:
         scene_before=_scene_revision,
         changes=[],
         warnings=[],
+        client_session=current_client_session(),
     )
 
 
@@ -75,21 +84,27 @@ def context_revision() -> int:
 
 
 def _capture_scene_signature() -> tuple[Any, ...]:
+    from . import change_journal
+    count = change_journal.node_count()
+    if count is None:
+        count = len(cmds.ls(dependencyNodes=True) or [])
     return (
         cmds.file(query=True, sceneName=True) or "",
         bool(cmds.file(query=True, modified=True)),
         cmds.undoInfo(query=True, undoName=True) or "",
         cmds.undoInfo(query=True, redoName=True) or "",
-        len(cmds.ls(dependencyNodes=True) or []),
+        count,
     )
 
 
 def _sync_external_scene_changes() -> None:
     global _last_scene_signature, _scene_revision
     signature = _capture_scene_signature()
+    from . import change_journal
+    observed_edit = change_journal.consume_pending_revision()
     if _last_scene_signature is None:
         _last_scene_signature = signature
-    elif signature != _last_scene_signature:
+    elif signature != _last_scene_signature or observed_edit:
         _scene_revision += 1
         _last_scene_signature = signature
 
@@ -119,6 +134,9 @@ def install_callbacks() -> None:
             om.MEventMessage.addEventCallback("timeChanged", _context_changed),
         ]
     )
+    from . import change_journal
+    change_journal.install()
+    register_lifecycle_cleanup(change_journal.reset)
 
 
 def register_lifecycle_cleanup(callback: Callable[[str], None]) -> None:
@@ -145,6 +163,8 @@ def _run_lifecycle_cleanup(reason: str) -> None:
 
 def shutdown_callbacks() -> None:
     _run_lifecycle_cleanup("plugin_shutdown")
+    from . import change_journal
+    change_journal.shutdown()
     while _callback_ids:
         callback_id = _callback_ids.pop()
         try:
@@ -168,6 +188,8 @@ def bump_scene_revision() -> int:
     global _scene_revision, _last_scene_signature
     _scene_revision += 1
     _last_scene_signature = _capture_scene_signature()
+    from . import change_journal
+    change_journal.consume_pending_revision()
     return _scene_revision
 
 
@@ -197,6 +219,8 @@ def transient_scene_signature(expected_node_delta: int) -> Iterator[None]:
             )
             if external_state_unchanged:
                 _last_scene_signature = current
+                from . import change_journal
+                change_journal.consume_pending_revision()
         except RuntimeError:
             # Scene teardown can make status queries unavailable; a later call
             # will conservatively observe a signature change.
@@ -214,7 +238,7 @@ def mark_mutated(call: CallState) -> None:
 
 
 def json_safe(value: Any, depth: int = 0) -> Any:
-    if depth > 10:
+    if depth > 32:
         return str(value)
     if isinstance(value, float) and not math.isfinite(value):
         return None

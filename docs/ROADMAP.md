@@ -3,6 +3,23 @@
 Version 0.5 is a complete development slice. It is useful now, but it is not
 the claimed end state.
 
+## Agent workflow rework in 0.6.0
+
+- Eight-tool compact discovery with the complete registry available on demand
+- Ordered workflows with cross-operation JSON Pointer references and selected outputs
+- Scene-query continuation cursors and structured Python arguments
+- Negotiated stdio protocol headers, aligned response budgets, and preserved errors
+- Combined observation, stale-observation guards, and post-action visual feedback
+- Persistent Python sessions with a small SDK and bounded JSON result handles
+- Scoped change journal and callback-maintained node counts
+- Session-scoped request IDs, immediate acknowledgement, and result recovery
+
+The [agent architecture review](AGENT_ARCHITECTURE_REVIEW.md) records the
+implementation, measurements, and next priorities: broader scene observation,
+responsive control messages under untracked load, and complete
+interaction timings. Workflow composition does not provide global atomicity,
+automatic retries, cancellation, or frozen scene snapshots.
+
 ## Verified in 0.5
 
 - Maya 2026.3 and Maya 2027.1 SDK Visual Studio 2022 Release builds
@@ -29,7 +46,7 @@ the claimed end state.
   cleanup-failure honesty
 
 The automated gate loads the absolute packaged plug-in and packaged Python
-runtime through mayapy, requires version 0.5 and all 18 tools, then unloads the
+runtime through mayapy, requires version 0.5 and all 25 tools, then unloads the
 plug-in cleanly.
 
 ## Interactive viewport validation
@@ -77,7 +94,7 @@ Production sign-off still requires:
 - Multi-view landmark triangulation and mesh-surface grounding
 - Native MDGMessage, MModelMessage, MUiMessage, and UFE observers
 - Exact scene and context revisions with coalesced event records
-- Resource subscriptions and cursor-based event polling
+- Resource subscriptions and broader event coverage beyond current scoped polling
 - Maya USD and UFE selection, hierarchy, transforms, and attributes
 
 ## 0.4 — transactions and production operations
@@ -119,7 +136,7 @@ Production sign-off still requires:
 
 - Streamable HTTP returns direct JSON only; GET SSE is 405.
 - Cancellation notifications are accepted but do not interrupt active Maya work.
-- Revisions use a scene-signature fallback for out-of-band user edits.
+- Revisions combine scoped callbacks and a scene-signature fallback for out-of-band user edits.
 - Normal typed mutations use undo chunks, not native undo command objects.
 - Rig-preview accept requires undo to be enabled; previews do not expire on a
   timer and remain until cancel, new/open, or unload under fixed count/node caps.

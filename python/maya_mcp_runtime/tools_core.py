@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import base64
+import hashlib
+import json
 from typing import Any
 
 import maya.cmds as cmds
@@ -144,20 +147,44 @@ def scene_query(arguments: dict[str, Any], call: state.CallState) -> dict[str, A
             continue
         filtered.append(node)
 
+    filtered.sort()
     limit = int(arguments.get("limit", 200))
+    # Bind the page to both its query and actual ordered membership. The scene
+    # signature is approximate, so revision alone cannot certify membership.
+    fingerprint = hashlib.sha256(json.dumps({
+        "query": {key: value for key, value in arguments.items() if key != "cursor"},
+        "epoch": state.scene_epoch(), "revision": state.scene_revision(),
+        "nodes": filtered,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    offset = 0
+    if "cursor" in arguments:
+        try:
+            cursor = json.loads(base64.b64decode(arguments["cursor"], altchars=b"-_", validate=True))
+            offset = cursor["offset"]
+            if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+                raise ValueError("Invalid offset")
+            if cursor["fingerprint"] != fingerprint or offset > len(filtered):
+                raise state.ToolError("STALE_CURSOR", "Scene or query changed; restart without cursor")
+        except (ValueError, KeyError, TypeError) as error:
+            raise state.ToolError("INVALID_ARGUMENT", "Invalid scene query cursor") from error
     attributes = list(arguments.get("include_attributes", []))
     connection_mode = arguments.get("include_connections", "none")
     records = [
         _node_details(node, attributes, connection_mode)
-        for node in filtered[:limit]
+        for node in filtered[offset:offset + limit]
     ]
     data = {
         "scope": scope,
         "nodes": records,
         "count": len(records),
         "total_matches": len(filtered),
-        "truncated": len(filtered) > limit,
+        "truncated": len(filtered) > offset + limit,
         "limit": limit,
+        "offset": offset,
+        "next_cursor": (base64.urlsafe_b64encode(json.dumps({
+            "offset": offset + limit, "fingerprint": fingerprint,
+        }, separators=(",", ":")).encode("ascii")).decode("ascii")
+                        if offset + limit < len(filtered) else None),
     }
     return state.result(call, data, f"Found {len(filtered)} matching Maya nodes")
 

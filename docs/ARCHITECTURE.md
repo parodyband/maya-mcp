@@ -19,7 +19,15 @@ flowchart LR
 ~~~
 
 The HTTP layer never calls Maya APIs. It parses, authenticates, validates the
-MCP lifecycle, then waits for a queued main-thread task.
+MCP lifecycle, then queues a main-thread task. Ordinary calls wait for the result.
+Workflows and scripts with `request_id` return immediately; native status lookup
+and duplicate delivery use a bounded MCP-session result cache without entering
+Maya. Session closure does not cancel queued work.
+
+The [agent loop](AGENT_LOOP.md) combines viewport and scene observation, guarded
+edits, post-action feedback, persistent Python sessions, and scoped change polling.
+The authenticated MCP session identity crosses the native/Python boundary as
+internal context, binding observations and Python namespaces to their owner.
 
 ## Non-negotiable invariants
 
@@ -153,11 +161,14 @@ send dag_path once those tools expose per-instance operations.
 
 scene_epoch changes after Maya creates or opens a scene, including user-driven
 file operations. scene_revision increments for MCP mutations and for observed
-out-of-band changes to the scene signature. context_revision tracks selection
+out-of-band changes observed by scoped callbacks or the fallback signature. context_revision tracks selection
 and time changes through Maya event callbacks.
 
-Native DG and per-node change observation will replace the remaining
-scene-signature fallback before 1.0.
+The bounded journal tracks global node additions/removals and watched-node
+attribute/name changes. Callback-maintained node counts avoid full enumeration
+on the normal synchronization path; unavailable coverage falls back to scanning.
+Parenting, component edits, downstream evaluation and playback need broader
+coverage before revisions can support stronger consistency claims.
 
 ## Undo and transactions
 
@@ -216,6 +227,35 @@ The next native vision layer will add stable object-ID, normal, wireframe, and
 rig-overlay passes. Object-ID requests currently return an explicit unsupported
 result rather than an unstable mapping.
 
+## Discovery and workflow execution
+
+The Python registry contains every operation. `catalog_json` advertises the
+compact profile by default; the complete catalog remains available internally.
+`maya.tools.describe` provides exact schemas on demand. The full profile
+advertises all operations directly for compatibility.
+
+Both direct calls and workflow steps cross `dispatcher.invoke_tool`, the shared
+validation and execution seam. The workflow module preflights known inputs,
+resolves JSON Pointers to earlier results, and bounds returned and retained data.
+It neither reimplements handler behavior nor merges undo chunks. The native
+server queues one workflow; Maya operations inside it still execute sequentially
+on the main thread. Long workflows can block Maya just like long single tools.
+
+Maya's undo-enabled native Python invocation groups recorded changes into one
+request-level history entry. The native adapter supplies that execution context
+to the workflow so it reports `undo_scope: native_request`. Child chunks still
+allow rollback inside a failing operation. Tests cover both native grouped undo
+and preservation of earlier steps after local rollback; direct Python calls
+alone cannot establish the native undo contract.
+
+The image-only compatibility contract of viewport capture also applies to
+workflows containing images. Other workflows retain both structured and text
+envelopes. Large output projections are bounded and report truncation.
+
+Query pagination fingerprints ordered membership as well as the approximate
+scene revision. It provides complete traversal without claiming snapshot
+isolation or exact observation of external attribute edits.
+
 ## Adding a tool
 
 1. Add a strict input schema and description in catalog.py.
@@ -224,6 +264,10 @@ result rather than an unstable mapping.
 4. Return through state.result so output remains schema-compatible.
 5. Add a Maya standalone test or an interactive viewport test.
 6. Document undo, destructiveness, and any file or host access.
+
+New operations are automatically discoverable and workflow-callable. Add an
+operation to the compact profile only when its frequency justifies loading its
+schema in every client session.
 
 See the official [MCP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and [MCP tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).

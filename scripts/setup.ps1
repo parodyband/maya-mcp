@@ -8,7 +8,9 @@ param(
     [string]$ModulesDirectory = (
         Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya\modules'
     ),
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$SkipClientConfiguration,
+    [switch]$SkipSkills
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,5 +52,9 @@ finally {
 
 Write-Host ''
 Write-Host 'Maya MCP setup is complete.' -ForegroundColor Green
+if (-not $SkipClientConfiguration) {
+    $installedClient = Join-Path (Split-Path -Parent (Split-Path -Parent $installedPlugin)) 'client'
+    & (Join-Path $installedClient 'Configure-MayaMcpClients.ps1') -SkipSkills:$SkipSkills
+}
 Write-Host "Open Maya $MayaVersion; the plug-in and local MCP server will start automatically."
 Write-Host 'Use the Maya MCP menu for status and per-session Python/MEL approval.'

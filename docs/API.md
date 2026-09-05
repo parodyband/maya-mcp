@@ -128,7 +128,132 @@ Protocol-shape and unknown-method failures use JSON-RPC errors.
 | maya.selection.set | mode | canonical active selection |
 | maya.history.apply | action | applied undo or redo count |
 
-### Scene query
+## Agent workflows
+
+`tools/list` defaults to eight tools: observation, scene query, scoped changes,
+operation discovery, workflow execution, scripting, Python sessions, and request
+status. Set `MAYA_MCP_TOOL_PROFILE=full` before plug-in startup for all 25 tools.
+The profile is fixed when the native server reads its catalog; reconnect clients
+after reloading. `maya.tools.describe` always searches the complete registry.
+The compact profile is a discovery choice, not an authorization restriction.
+
+Find operation summaries without loading their schemas:
+
+~~~json
+{"query":"material"}
+~~~
+
+Retrieve exact schemas for known names, up to eight per call:
+
+~~~json
+{"names":["maya.geometry.apply","maya.node.apply"]}
+~~~
+
+Call `maya.workflow.run` with this input to create, move, and inspect a cube in
+one native main-thread dispatch:
+
+~~~json
+{
+  "steps": [
+    {
+      "id": "create",
+      "tool": "maya.geometry.apply",
+      "arguments": {"kind":"cube","name":"workflowCube"},
+      "select": {}
+    },
+    {
+      "id": "move",
+      "tool": "maya.node.apply",
+      "arguments": {
+        "operations": [{
+          "op":"set_transform",
+          "node":{"$ref":"create#/data/transform"},
+          "translate":[2,3,4]
+        }]
+      },
+      "select": {}
+    },
+    {
+      "id": "inspect",
+      "tool": "maya.scene.query",
+      "arguments": {
+        "scope":"nodes",
+        "nodes":[{"$ref":"create#/data/transform"}],
+        "include_attributes":["translate"]
+      },
+      "select": {"position":"/data/nodes/0/attributes/translate"}
+    }
+  ]
+}
+~~~
+
+The final step returns `position: [[2,3,4]]`. Earlier step data stays available
+for references even when `select: {}` suppresses it from the response.
+
+Reference objects contain exactly `$ref`, whose value is
+`stepId#` followed by a JSON Pointer into that step's structured envelope.
+Use `/data/...` for operation data, an empty pointer for the complete envelope,
+and `~1` or `~0` for literal slash or tilde in keys. Array indexes are zero-based.
+References must name earlier steps; nesting workflows is rejected.
+
+All step schemas, reference ordering, and selection-pointer syntax are checked
+before the first step. Resolved values are validated again before each handler
+runs. Scene-dependent checks and referenced output existence cannot be fully
+validated ahead of execution. Unknown Maya operations never fall through to
+arbitrary scripting.
+
+Optional `if_scene_epoch` and `if_scene_revision` guard the workflow's starting
+scene. Revisions retain the existing approximate external-edit detection.
+Workflows are ordered batches with each handler's existing undo policy, not
+atomic transactions. Use `maya.node.apply` for one undo chunk of graph edits.
+
+On failure, `isError` is true and the error code is `WORKFLOW_STOPPED`. Inspect
+`data.steps`, `completed`, `failed_step`, and `skipped` before doing more work.
+Earlier successful edits remain applied. Each step reports its own undo recording,
+revisions, and timing. **Maya groups recorded changes from a native MCP request
+into one undo item**, as reported by `data.undo_scope: "native_request"` and
+each step's `undo.scope`. Do not issue one history undo per step. Child chunks
+still support rollback of a failing operation; this does not make the entire
+workflow atomic. Direct Python handler tests have operation-level undo scope.
+Top-level undo availability is conservative for workflows containing file,
+script, or history operations, which can invalidate the history stack. If output
+selection fails after an edit, `OUTPUT_SELECTION_FAILED` is a warning and the
+successful edit stays successful. Do not repeat it to repair output selection.
+
+Workflows accept at most 32 steps. Returned data and change records each have
+a 512 KiB budget. Suppressed output is marked as truncated. If retained step
+results exceed 4 MiB, execution stops before the next step and reports it as
+unexecuted. Image content has a separate 6 MiB serialized budget. Each step's
+`image_content_indices` identifies its images in the outer MCP content array;
+any embedded operation-level indexes remain relative to that original operation.
+Like viewport capture, a workflow with images returns image-only `content` for
+client compatibility and keeps the complete envelope in `structuredContent`.
+If every image is omitted by the budget, visible text contains only a brief
+status message; renderer payloads stay in structured content. Workflows that
+never produce images also serialize the envelope into text. Error summaries,
+messages, and details have separate bounds so large exceptions cannot hide the
+completed-step report behind a transport-size error.
+
+Python scripts accept an `arguments` object exposed directly to the source:
+
+~~~json
+{
+  "language":"python",
+  "source":"result = cmds.ls(arguments['pattern'], long=True)[:50]",
+  "arguments":{"pattern":"*_CTRL"}
+}
+~~~
+
+Python/MEL retain their existing permission gate and full host privileges.
+Workflow composition does not bypass that gate. Scripts without `session_id`
+use a fresh namespace per call. `maya.session` provides persistent, owner-bound
+Python namespaces. An optional `observe` object on workflow/script requests
+returns post-action feedback, and `if_observation` rejects detectably stale input.
+Native `request_id` supports replay within the same live MCP session. There is
+no automatic retry or force-cancellation. See [the agent loop contract](AGENT_LOOP.md)
+for examples, limits, observation coverage, and request lifecycle.
+
+## Scene query
 
 ~~~json
 {
@@ -144,7 +269,14 @@ Protocol-shape and unknown-method failures use JSON-RPC errors.
 
 Scopes are scene, selection, subtree, and nodes.
 
-### Transactional node operations
+Results are sorted by long name. To continue, resend the identical query with
+the returned `next_cursor` as `cursor`. A null cursor marks the last page.
+The cursor binds query arguments, scene epoch, observed revision, and ordered
+matching node names. A changed query or membership returns `STALE_CURSOR`;
+restart without a cursor. This is not a frozen attribute snapshot: unobserved
+external attribute edits can still occur between calls.
+
+## Transactional node operations
 
 Supported operation names:
 

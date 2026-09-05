@@ -25,7 +25,7 @@ New-Item -ItemType Directory -Path $mayaAppDir, $localAppData -Force | Out-Null
 $environmentNames = @(
     'MAYA_APP_DIR', 'LOCALAPPDATA', 'MAYA_MODULE_PATH', 'MAYA_MCP_TOKEN',
     'MAYA_MCP_ALLOW_UNSAFE_CODE', 'MAYA_DISABLE_CIP', 'MAYA_DISABLE_CER',
-    'MAYA_MCP_TEST_PACKAGE', 'PYTHONPATH'
+    'MAYA_MCP_TEST_PACKAGE', 'PYTHONPATH', 'MAYA_MCP_TOOL_PROFILE'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -49,7 +49,13 @@ try {
     $env:MAYA_DISABLE_CIP = '1'
     $env:MAYA_DISABLE_CER = '1'
     $env:MAYA_MCP_TEST_PACKAGE = $packageRoot
+    $env:MAYA_MCP_TOOL_PROFILE = 'full'
 
+    Invoke-MayaTest 'tests\workflow_test.py' 'Agent workflow and compact discovery test'
+    Invoke-MayaTest 'tests\observation_test.py' 'Observation and feedback loop test'
+    Invoke-MayaTest 'tests\change_journal_test.py' 'Scoped native change journal test'
+    Invoke-MayaTest 'tests\session_test.py' 'Persistent Python session test'
+    Invoke-MayaTest 'tests\request_recovery_test.py' 'Native request recovery test'
     Invoke-MayaTest 'tests\updater_test.py' 'Updater integrity test'
     Invoke-MayaTest 'tests\vp2_command_test.py' 'Native VP2 command test'
     Invoke-MayaTest 'tests\viewport_contract_test.py' 'Viewport contract test'

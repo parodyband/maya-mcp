@@ -22,11 +22,13 @@ $previousModules = $env:MAYA_MCP_INSTALLER_MODULES_DIRECTORY
 $previousMayaLocation = $env:MAYA_MCP_INSTALLER_MAYA_LOCATION
 $previousAllowRunning = $env:MAYA_MCP_INSTALLER_ALLOW_RUNNING
 $previousSkipClients = $env:MAYA_MCP_INSTALLER_SKIP_CLIENT_CONFIGURATION
+$previousLocalAppData = $env:LOCALAPPDATA
 try {
     $env:MAYA_MCP_INSTALLER_NO_PAUSE = '1'
     $env:MAYA_MCP_INSTALLER_SKIP_CLIENT_CONFIGURATION = '1'
     foreach ($archive in $archives) {
         $caseRoot = Join-Path $testRoot $archive.BaseName
+        $env:LOCALAPPDATA = Join-Path $caseRoot 'local-app-data'
         $extracted = Join-Path $caseRoot 'release'
         $modules = Join-Path $caseRoot 'modules'
         $missingMaya = Join-Path $caseRoot 'maya-not-installed'
@@ -53,6 +55,10 @@ try {
         $descriptor = Join-Path $modules "maya-mcp-$($manifest.maya_major_version).mod"
         if (-not (Test-Path -LiteralPath $plugin)) { throw "Installer did not copy $plugin." }
         if (-not (Test-Path -LiteralPath $descriptor)) { throw "Installer did not copy $descriptor." }
+        $skill = Join-Path $modules "$folder\client\skills\maya-mcp\SKILL.md"
+        $stableSkill = Join-Path $env:LOCALAPPDATA 'MayaMCP\client\skills\maya-mcp\SKILL.md'
+        if (-not (Test-Path $skill) -or -not (Test-Path $stableSkill)) { throw 'Release skill payload missing.' }
+        if ((Get-FileHash $skill).Hash -ne (Get-FileHash $stableSkill).Hash) { throw 'Stable skill source differs from package.' }
         if ((Get-Content -LiteralPath $descriptor -Raw) -notmatch [regex]::Escape("./$folder")) {
             throw "Installed descriptor does not select $folder."
         }
@@ -83,7 +89,11 @@ try {
     $env:MAYA_MCP_INSTALLER_MAYA_LOCATION = $previousMayaLocation
     $env:MAYA_MCP_INSTALLER_ALLOW_RUNNING = $previousAllowRunning
     $env:MAYA_MCP_INSTALLER_SKIP_CLIENT_CONFIGURATION = $previousSkipClients
-    if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
+    $env:LOCALAPPDATA = $previousLocalAppData
+    $resolvedTest = [IO.Path]::GetFullPath($testRoot)
+    $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    if (-not $resolvedTest.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid cleanup path' }
+    if (Test-Path -LiteralPath $resolvedTest) { Remove-Item -LiteralPath $resolvedTest -Recurse -Force }
 }
 
 Write-Host 'MAYA_MCP_RELEASE_INSTALLER_TEST_RESULT=passed extracted=true direct_from_zip=true' -ForegroundColor Green

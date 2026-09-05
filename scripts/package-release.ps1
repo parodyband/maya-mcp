@@ -19,10 +19,18 @@ if ($projectText -notmatch 'project\(maya_mcp VERSION ([0-9]+\.[0-9]+\.[0-9]+)')
 $version = $Matches[1]
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot "dist\v$version" }
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+function Assert-ReleaseChild([string]$Path) {
+    $resolved = [IO.Path]::GetFullPath($Path)
+    if (-not $resolved.StartsWith($OutputDirectory.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Staging path escapes release directory: $resolved"
+    }
+}
 
 $claudeAssetName = "maya-mcp-v$version-claude-desktop-windows-x64.mcpb"
 $claudeAssetPath = Join-Path $OutputDirectory $claudeAssetName
 $claudeStaging = Join-Path $OutputDirectory ".staging-claude-desktop-$PID"
+Assert-ReleaseChild $claudeStaging
 if (Test-Path -LiteralPath $claudeStaging) { Remove-Item -LiteralPath $claudeStaging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $claudeStaging 'server') | Out-Null
 $bundleBridge = Join-Path (Get-MayaMcpPackageDirectory -MayaVersion '2027') 'maya-mcp\bin\maya-mcp-bridge.exe'
@@ -62,6 +70,7 @@ foreach ($target in @('2026.3', '2027')) {
     $folderName = "maya-mcp-$version-maya$target"
     $moduleFileName = "maya-mcp-$($packageManifest.maya_major_version).mod"
     $staging = Join-Path $OutputDirectory ".staging-$target-$PID"
+    Assert-ReleaseChild $staging
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     Copy-Item -LiteralPath (Join-Path $packageRoot 'maya-mcp') -Destination (Join-Path $staging $folderName) -Recurse
