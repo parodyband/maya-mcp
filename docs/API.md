@@ -396,7 +396,19 @@ visibility, and locking are supported by `add_attribute`.
 | maya.geometry.apply | cube, sphere, cylinder, cone, plane, torus, curve |
 | maya.material.apply | create_assign, assign, inspect |
 | maya.animation.apply | set_keys, delete_keys, inspect |
+| maya.animation.profile | create, get, export, list, delete |
+| maya.animation.describe | channel, tangent, infinity, layer and editability inspection |
+| maya.animation.sample | bounded evaluated motion and declared contacts |
+| maya.animation.capture | aligned images, frame sheets, trails, landmark ghosts, review player |
+| maya.animation.artifact | get, frames, notes, list, release |
+| maya.animation.analyze | contact, pose-step, reach and loop diagnostics |
+| maya.animation.edit | per-channel set_keys, tangents, delete_keys, retime |
+| maya.animation.compare | retained take comparison with explicit frame alignment |
+| maya.animation.layer | candidate mute, solo and weight |
 | maya.file.apply | query, save, save_as, open, import, reference, export_selection |
+
+See [Animation review and editing](ANIMATION.md) for examples, bounds, reference
+timing, candidate layers, and evaluation limitations.
 
 All transforms are explicit arrays of three numbers. Times are numeric Maya
 time values under the current scene time unit.

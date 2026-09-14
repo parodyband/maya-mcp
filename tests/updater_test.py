@@ -184,6 +184,19 @@ def test_check_uses_maya_application_modules() -> None:
                     updater._set_busy(False)
 
 
+def test_startup_skill_migration() -> None:
+    package = Path("test-package")
+    with patch.dict(os.environ, {"MAYA_MCP_DISABLE_SKILL_SYNC": "0"}), \
+            patch.object(updater, "_start_worker", side_effect=lambda fn, name: fn()), \
+            patch.object(updater, "sync_client_skills") as sync:
+        updater.start_skill_sync(package)
+        sync.assert_called_once_with(package)
+    with patch.dict(os.environ, {"MAYA_MCP_DISABLE_SKILL_SYNC": "1"}), \
+            patch.object(updater, "_start_worker") as start:
+        updater.start_skill_sync(package)
+        start.assert_not_called()
+
+
 def test_path_traversal() -> None:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
@@ -215,5 +228,6 @@ if __name__ == "__main__":
     test_install()
     test_skill_update()
     test_check_uses_maya_application_modules()
+    test_startup_skill_migration()
     test_path_traversal()
     print("MAYA_MCP_UPDATER_TEST_RESULT=passed")

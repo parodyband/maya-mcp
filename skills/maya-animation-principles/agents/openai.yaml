@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maya Animation Principles"
+  short_description: "Improve character mechanics, acting, timing, and posing"
+  default_prompt: "Use $maya-animation-principles to improve this character animation using clear poses, motivated timing, and verified motion."

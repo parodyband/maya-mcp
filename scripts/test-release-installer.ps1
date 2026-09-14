@@ -59,6 +59,12 @@ try {
         $stableSkill = Join-Path $env:LOCALAPPDATA 'MayaMCP\client\skills\maya-mcp\SKILL.md'
         if (-not (Test-Path $skill) -or -not (Test-Path $stableSkill)) { throw 'Release skill payload missing.' }
         if ((Get-FileHash $skill).Hash -ne (Get-FileHash $stableSkill).Hash) { throw 'Stable skill source differs from package.' }
+        foreach ($relative in @('SKILL.md', 'references\body-mechanics.md', 'references\acting-and-review.md', 'references\sources.md', 'agents\openai.yaml')) {
+            $bundled = Join-Path $modules "$folder\client\skills\maya-animation-principles\$relative"
+            $stable = Join-Path $env:LOCALAPPDATA "MayaMCP\client\skills\maya-animation-principles\$relative"
+            if (-not (Test-Path -LiteralPath $bundled) -or -not (Test-Path -LiteralPath $stable)) { throw "Animation skill payload missing: $relative" }
+            if ((Get-FileHash -LiteralPath $bundled).Hash -ne (Get-FileHash -LiteralPath $stable).Hash) { throw 'Stable animation skill differs from package.' }
+        }
         if ((Get-Content -LiteralPath $descriptor -Raw) -notmatch [regex]::Escape("./$folder")) {
             throw "Installed descriptor does not select $folder."
         }

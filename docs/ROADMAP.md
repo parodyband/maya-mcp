@@ -1,7 +1,13 @@
 # Roadmap and Known Limits
 
-Version 0.5 is a complete development slice. It is useful now, but it is not
-the claimed end state.
+Version 0.7 adds animation review and editing plus operational and animation
+principles skills. See [the release notes](RELEASE_0.7.0.md) and
+[animation guide](ANIMATION.md) for the shipped capabilities and their limits.
+
+Existing Maya MCP customers receive both skills during updates or startup,
+including registrations that predate managed skill receipts. Custom edits remain
+protected. The earlier development milestones below record the project's history
+and remaining production work.
 
 ## Agent workflow rework in 0.6.0
 

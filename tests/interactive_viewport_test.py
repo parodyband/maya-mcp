@@ -1332,6 +1332,7 @@ def _run_validation(
                 "captured" if metrics.get("render_override") else "not_configured"
             ),
         }
+        checks["animation_review"] = _validate_animation_review(client, scene, evidence_dir)
         return {
             "schema_version": 1,
             "passed": True,
@@ -1347,6 +1348,52 @@ def _run_validation(
         }
     finally:
         client.close()
+
+
+def _validate_animation_review(client, scene, evidence_dir):
+    """Exercise real image delivery through native HTTP in the isolated fixture."""
+    import shutil
+    profile, _ = client.call_tool("maya.animation.profile", {
+        "action": "create", "label": "Viewport review rig", "mappings": [
+            {"id": "body", "node": scene["target"]},
+            {"id": "head", "node": scene["target"], "offset": [0, 2, 0], "parent": "body"}]})
+    args = {"profile_id": profile["data"]["profile_id"], "frames": [1, 3, 5, 7],
+            "cameras": [scene["perspective"], scene["orthographic"]],
+            "width": 480, "height": 320, "trails": True, "ghosts": 1, "max_seconds": 60}
+    def context():
+        return {"time": cmds.currentTime(query=True), "selection": cmds.ls(selection=True, long=True),
+                "camera": cmds.modelPanel(scene["panel"], query=True, camera=True),
+                "grid": cmds.modelEditor(scene["panel"], query=True, grid=True)}
+    previous = _main_thread(context)
+    before, images = client.call_tool("maya.animation.capture", {**args, "label": "Before"})
+    _assert(len(images) == 1 and before["data"]["image_count"] == 8, "Animation capture did not deliver eight frames and a sheet")
+    _assert(_main_thread(context) == previous, "Animation capture changed user context")
+    (evidence_dir/"animation-before.png").write_bytes(base64.b64decode(images[0]["data"]))
+    client.call_tool("maya.animation.edit", {"action": "set_keys", "edits": [{
+        "node": scene["target"], "attribute": "rotateY", "keys": [
+            {"time": 1, "value": 0, "out_tangent": "linear"},
+            {"time": 7, "value": 45, "in_tangent": "linear"}]}]})
+    after, images = client.call_tool("maya.animation.capture", {**args, "label": "After", "notes": [
+        {"kind": "beat", "time_range": [3, 5], "text": "Turn before the settle <review>"}]})
+    _assert(after["data"]["complete"], "Animation capture unexpectedly returned partial evidence")
+    (evidence_dir/"animation-after.png").write_bytes(base64.b64decode(images[0]["data"]))
+    read, individual = client.call_tool("maya.animation.artifact", {"action": "frames", "artifact_id": after["data"]["artifact_id"], "indices": [2]})
+    _assert(len(individual) == 1 and read["data"]["images"][0]["frame"] == 3, "Animation frame retrieval lost correspondence")
+    (evidence_dir/"animation-frame.png").write_bytes(base64.b64decode(individual[0]["data"]))
+    _, clean = client.call_tool("maya.animation.artifact", {"action": "frames", "artifact_id": after["data"]["artifact_id"], "indices": [2], "view": "clean"})
+    _assert(clean[0]["data"] != individual[0]["data"], "Clean frame contains the diagnostic overlay")
+    client.call_tool("maya.animation.artifact", {"action": "notes", "artifact_id": after["data"]["artifact_id"], "notes": [
+        {"kind": "feedback", "time_range": [3, 5], "text": "Review this pose", "image_xy": [0.5, 0.4]}]})
+    comparison, pairs = client.call_tool("maya.animation.compare", {
+        "before": before["data"]["artifact_id"], "after": after["data"]["artifact_id"], "image_pairs": 2})
+    _assert(len(pairs) == 2 and comparison["data"]["paired_frames"] == 4, "Animation comparison failed")
+    (evidence_dir/"animation-compare.png").write_bytes(base64.b64decode(pairs[0]["data"]))
+    # Keep review artifacts outside the transient store before unload clears it.
+    shutil.copytree(Path(after["data"]["review_path"]).parent, evidence_dir/"animation-player")
+    for take in (before, after):
+        client.call_tool("maya.animation.artifact", {"action": "release", "artifact_id": take["data"]["artifact_id"]})
+    return {"status": "passed", "views": 2, "frames": 4,
+            "before_seconds": before["data"]["timing_seconds"], "after_seconds": after["data"]["timing_seconds"]}
 
 
 def _worker_entry(
@@ -1459,15 +1506,15 @@ def _start() -> None:
             f"{runtime_path} (expected below {packaged_scripts})",
         )
         _assert(
-            maya_mcp_runtime.__version__ == "0.6.1",
+            maya_mcp_runtime.__version__ == "0.7.0",
             "Interactive gate imported the wrong Python runtime version: "
             f"{maya_mcp_runtime.__version__}",
         )
         status = json.loads(cmds.mayaMcpStatus())
         _assert(status.get("running") is True, f"Maya MCP did not start: {status}")
         _assert(
-            status.get("version") == "0.6.1",
-            f"Interactive gate expected Maya MCP 0.6.1, got {status.get('version')}",
+            status.get("version") == "0.7.0",
+            f"Interactive gate expected Maya MCP 0.7.0, got {status.get('version')}",
         )
         discovery_path = Path(status["discoveryFile"]).resolve()
         local_app_data = Path(os.environ["LOCALAPPDATA"]).resolve()

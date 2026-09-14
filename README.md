@@ -11,11 +11,11 @@ The full catalog remains available through
 `MAYA_MCP_TOOL_PROFILE=full`. See the [agent architecture review](docs/AGENT_ARCHITECTURE_REVIEW.md)
 for the measured discovery reduction and the next priorities.
 
-Version 0.5 is a working development preview. It includes the native transport,
-Maya main-thread dispatch, scene and rigging tools, native VP2 depth readback,
-vision grounding, resources, prompts, security controls, and isolated batch and
-interactive test harnesses. GitHub-hosted release metadata now drives exact-API,
-SHA-256-verified updates.
+Version 0.7.0 adds animation review across time, motion diagnostics, candidate
+editing, and companion skills for efficient operation and animation principles.
+Both new and existing customers receive the skills through installation or
+updates. GitHub-hosted release metadata drives exact-API, SHA-256-verified updates.
+See [the release notes](docs/RELEASE_0.7.0.md).
 
 ## What works
 
@@ -38,6 +38,9 @@ SHA-256-verified updates.
 - Conservative screen-space scene maps with canonical node identity
 - Viewport world-to-screen projection and pixel picking
 - Geometry, materials, animation, joint chains, controls, and skin binding
+- Animation frame sequences, motion measurements, contact/reach/loop diagnostics,
+  explicit rig profiles, candidate layers, reversible curve edits, and local
+  review playback; see the [animation guide](docs/ANIMATION.md)
 - Non-serializing rig previews with bounded lifetime, strict ownership, and
   preflighted one-chunk acceptance when Maya undo is enabled
 - A Maya MCP menu for server status and one-click, per-session Python/MEL approval
@@ -163,7 +166,7 @@ Run the full standalone integration test:
 Expected result:
 
 ~~~text
-MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":25,"typed_mutation":"passed","version":"0.6.1"}
+MAYA_MCP_TEST_RESULT={"protocol":"2025-11-25","resources":4,"rigging_pipeline":"passed","security_checks":"passed","tools":34,"typed_mutation":"passed","version":"0.7.0"}
 ~~~
 
 Validate the real GPU viewport in a separate, isolated Maya process:
@@ -220,15 +223,25 @@ To add a client installed after Maya MCP, or repair its configuration, choose:
 
 **Maya MCP > Configure AI Clients...**
 
-Client configuration also installs the shared `maya-mcp` skill for detected
-Codex and Claude Code clients. Codex uses `~/.agents/skills/maya-mcp`; Claude Code
-uses `~/.claude/skills/maya-mcp` (or `CLAUDE_CONFIG_DIR/skills/maya-mcp`). The skill
-teaches observation, batching, persistent sessions, and outcome recovery. It
-checks available server capabilities and does not require a particular model.
+Client configuration installs two companion skills for detected Codex and Claude
+Code clients: `maya-mcp` teaches tool operation, and `maya-animation-principles`
+guides character posing, timing, spacing, body mechanics, acting, and polish.
+The latter is an original practical guide informed by *The Illusion of Life* and
+*The Animator's Survival Kit*, with source attribution and focused references.
+It connects the principles to Maya's animation capture and review tools.
+
+Codex uses `~/.agents/skills/<skill-name>`; Claude Code uses
+`~/.claude/skills/<skill-name>` (or `CLAUDE_CONFIG_DIR/skills/<skill-name>`).
+Complete folders, including references and UI metadata, are installed. The
+skills check available server capabilities and do not require a particular model.
 
 Setup and the PowerShell release installer accept `-SkipSkills` for connection-only
-configuration. Managed skill copies update with packages; local modifications
-and unrelated skills are preserved. **Configure AI Clients** repairs missing
+configuration. Managed skill copies update with packages; clients with an existing
+Maya MCP registration receive both skills even without older skill receipts.
+Startup repairs skills for customers arriving through older updaters. Set
+`MAYA_MCP_DISABLE_SKILL_SYNC=1` to disable automatic synchronization.
+Local modifications to any managed file
+and unrelated user files are preserved. **Configure AI Clients** repairs missing
 managed files. Move a customized copy elsewhere before requesting replacement.
 Claude Desktop's MCP Bundle continues to provide the connection and server
 instructions; this installer does not install a Claude Code skill into Desktop.
@@ -317,6 +330,10 @@ Start with the [observe/act/observe guide](docs/AGENT_LOOP.md) for the fast inte
 - maya.geometry.apply — polygon primitives and NURBS curves
 - maya.material.apply — create, inspect, and assign common PBR materials
 - maya.animation.apply — inspect, set, or delete animation keys
+- maya.animation.profile / describe — map rig roles and inspect complete curves
+- maya.animation.sample / capture / artifact — collect and retrieve motion evidence
+- maya.animation.analyze / compare — diagnose motion and compare candidate takes
+- maya.animation.edit / layer — edit channels and manage animation candidates
 - maya.file.apply — query, save, open, import, reference, or export
 
 ### Rigging

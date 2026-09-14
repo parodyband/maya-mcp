@@ -11,6 +11,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Python hosts can inherit a PowerShell 7 PSModulePath while launching Windows
+# PowerShell 5.1. Resolve its own utility module instead of an incompatible one.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
+}
 if (-not $LauncherPath) {
     $base = if ($env:LOCALAPPDATA) {
         Join-Path $env:LOCALAPPDATA 'MayaMCP'
@@ -39,47 +44,163 @@ $configured = @()
 $unavailable = @()
 
 if (-not $SkillSource) {
-    $SkillSource = Join-Path $PSScriptRoot 'skills\maya-mcp'
+    $SkillSource = Join-Path $PSScriptRoot 'skills'
     if (-not (Test-Path -LiteralPath $SkillSource)) {
-        $SkillSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills\maya-mcp'
+        $SkillSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills'
     }
 }
 
-function Install-MayaSkill([string]$Root) {
-    if ($SkipSkills) { return }
-    $destination = Join-Path $Root 'maya-mcp'
-    $target = Join-Path $destination 'SKILL.md'
-    $receipt = Join-Path $destination '.maya-mcp-install.json'
-    if ($ExistingSkillsOnly -and -not (Test-Path -LiteralPath $receipt -PathType Leaf)) { return }
-    $source = Join-Path $SkillSource 'SKILL.md'
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Maya skill source missing: $source" }
-    # Never follow a redirected skill directory/file or replace an unowned skill.
-    foreach ($path in @($destination, $target, $receipt)) {
-        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            Write-Warning "Preserving redirected skill path: $path"; return
+function Assert-SkillNotRedirected([string]$Path) {
+    $candidate = [IO.Path]::GetFullPath($Path)
+    while ($candidate) {
+        if ((Test-Path -LiteralPath $candidate) -and ((Get-Item -LiteralPath $candidate -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Redirected skill path: $candidate"
         }
+        $candidate = [IO.Path]::GetDirectoryName($candidate)
     }
-    if (Test-Path -LiteralPath $destination) {
-        try {
-            $previous = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
-            if ($previous.owner -ne 'maya-mcp' -or $previous.schema_version -ne 1) { throw 'Unowned skill' }
-            if ((Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $previous.sha256) {
-                throw 'Locally modified skill'
+}
+
+function Get-SkillChild([string]$Directory, [string]$Relative) {
+    if ([IO.Path]::IsPathRooted($Relative) -or $Relative -match '(^|[\\/])\.{1,2}([\\/]|$)' -or $Relative -match ':') {
+        throw 'Invalid managed skill path'
+    }
+    $prefix = [IO.Path]::GetFullPath($Directory).TrimEnd('\') + '\'
+    $resolved = [IO.Path]::GetFullPath((Join-Path $Directory $Relative))
+    if (-not $resolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Skill path escaped its directory' }
+    Assert-SkillNotRedirected $resolved
+    return $resolved
+}
+
+function Read-SkillReceipt([string]$Directory) {
+    $receipt = Get-SkillChild $Directory '.maya-mcp-install.json'
+    $previous = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+    if ($previous.owner -ne 'maya-mcp') { throw 'Unowned skill' }
+    $files = @{}
+    if ($previous.schema_version -eq 1) {
+        $files['SKILL.md'] = [string]$previous.sha256
+    } elseif ($previous.schema_version -eq 2) {
+        foreach ($property in $previous.files.PSObject.Properties) {
+            [void](Get-SkillChild $Directory $property.Name)
+            $files[$property.Name] = [string]$property.Value
+        }
+    } else { throw 'Unsupported skill receipt' }
+    if (-not $files.ContainsKey('SKILL.md')) { throw 'Incomplete skill receipt' }
+    foreach ($digest in $files.Values) {
+        if ($digest -notmatch '^[0-9A-Fa-f]{64}$') { throw 'Invalid skill digest' }
+    }
+    return $files
+}
+
+function Install-MayaSkillFolder([string]$Root, [IO.DirectoryInfo]$SourceFolder) {
+    $destination = Join-Path $Root $SourceFolder.Name
+    $previousFiles = @{}
+    $sourceFiles = @{}
+    Assert-SkillNotRedirected $SourceFolder.FullName
+    foreach ($entry in Get-ChildItem -LiteralPath $SourceFolder.FullName -Recurse -Force) {
+        Assert-SkillNotRedirected $entry.FullName
+        if ($entry.PSIsContainer) { continue }
+        $relative = $entry.FullName.Substring($SourceFolder.FullName.Length + 1).Replace('\', '/')
+        if ($relative -eq '.maya-mcp-install.json') { throw 'Source must not include an installation receipt' }
+        $sourceFiles[$relative] = (Get-FileHash -LiteralPath $entry.FullName -Algorithm SHA256).Hash
+    }
+    if (-not $sourceFiles.ContainsKey('SKILL.md')) { throw 'Skill source is missing SKILL.md' }
+    try {
+        Assert-SkillNotRedirected $destination
+        foreach ($relative in $sourceFiles.Keys) { [void](Get-SkillChild $destination $relative) }
+        if (Test-Path -LiteralPath $destination) {
+            $previousFiles = Read-SkillReceipt $destination
+            foreach ($relative in $previousFiles.Keys) {
+                $target = Get-SkillChild $destination $relative
+                if ((Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $previousFiles[$relative]) {
+                    throw "Locally modified skill file: $relative"
+                }
             }
-        } catch {
-            Write-Warning "Preserving existing skill at $destination. Move your custom copy before repairing this managed skill."; return
+            foreach ($relative in $sourceFiles.Keys) {
+                if ((Test-Path -LiteralPath (Get-SkillChild $destination $relative)) -and -not $previousFiles.ContainsKey($relative)) {
+                    throw "Unmanaged file conflicts with bundled skill: $relative"
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Preserving skill at $destination. $($_.Exception.Message)"; return
+    }
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    foreach ($relative in $sourceFiles.Keys) {
+        $target = Get-SkillChild $destination $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $SourceFolder.FullName $relative) -Destination $target -Force
+    }
+    foreach ($relative in $previousFiles.Keys) {
+        if (-not $sourceFiles.ContainsKey($relative)) {
+            $target = Get-SkillChild $destination $relative
+            if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
         }
     }
-    $digest = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
-    New-Item -ItemType Directory -Path $destination -Force | Out-Null
-    Copy-Item -LiteralPath $source -Destination $target -Force
-    [ordered]@{ owner = 'maya-mcp'; schema_version = 1; sha256 = $digest } |
-        ConvertTo-Json | Set-Content -LiteralPath $receipt -Encoding UTF8
-    Write-Host "Installed Maya skill: $target"
+    [ordered]@{ owner = 'maya-mcp'; schema_version = 2; files = $sourceFiles } |
+        ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Get-SkillChild $destination '.maya-mcp-install.json') -Encoding UTF8
+    Write-Host "Installed Maya skill: $(Join-Path $destination 'SKILL.md')"
+}
+
+function Install-MayaSkill([string]$Root) {
+    if ($SkipSkills -or $env:MAYA_MCP_DISABLE_SKILL_SYNC -match '^(1|true|yes|on)$') { return }
+    if (Test-Path -LiteralPath (Join-Path $SkillSource 'SKILL.md') -PathType Leaf) {
+        # Retain compatibility with callers supplying a single skill directory.
+        $folders = @(Get-Item -LiteralPath $SkillSource)
+    } else {
+        $folders = @(Get-ChildItem -LiteralPath $SkillSource -Directory | Where-Object {
+            Test-Path -LiteralPath (Join-Path $_.FullName 'SKILL.md') -PathType Leaf
+        })
+    }
+    if (-not $folders.Count) { throw "No bundled Maya skills found at $SkillSource" }
+    if ($ExistingSkillsOnly) {
+        # Receipts and existing MCP registrations cover customers who predate
+        # companion skills. No registration or unrelated client config is changed.
+        $enrolled = $false
+        foreach ($name in @('maya-mcp') + @($folders | ForEach-Object Name)) {
+            try { [void](Read-SkillReceipt (Join-Path $Root $name)); $enrolled = $true; break } catch { }
+        }
+        if (-not $enrolled) { $enrolled = Test-MayaClientRegistration $Root }
+        if (-not $enrolled) { return }
+    }
+    foreach ($folder in $folders) {
+        if ($folder.Name -notmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { throw "Invalid bundled skill name: $($folder.Name)" }
+        Install-MayaSkillFolder $Root $folder
+    }
 }
 
 $codexSkills = Join-Path $AgentHome '.agents\skills'
 $claudeSkills = if ($env:CLAUDE_CONFIG_DIR) { Join-Path $env:CLAUDE_CONFIG_DIR 'skills' } else { Join-Path $AgentHome '.claude\skills' }
+$codexConfigRoot = if ($env:CODEX_HOME -and -not $PSBoundParameters.ContainsKey('AgentHome')) { $env:CODEX_HOME } else { Join-Path $AgentHome '.codex' }
+
+function Test-MayaClientRegistration([string]$Root) {
+    $bridgePattern = '(?i)(Start-MayaMcpBridge\.ps1|maya-mcp-bridge(?:\.exe)?)'
+    if ($Root -eq $codexSkills) {
+        $config = Join-Path $codexConfigRoot 'config.toml'
+        if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { return $false }
+        $text = Get-Content -LiteralPath $config -Raw
+        # Only top-level MCP server tables, never a mention inside other config.
+        foreach ($section in [regex]::Matches($text, '(?ms)^[ \t]*\[mcp_servers\.([^\]\r\n]+)\][ \t]*(?:\r?\n|\z)(.*?)(?=^[ \t]*\[|\z)')) {
+            $name = $section.Groups[1].Value.Trim('"', "'")
+            if ($name -eq 'maya-mcp' -or $section.Groups[2].Value -match $bridgePattern) { return $true }
+        }
+        return $false
+    }
+    if ($Root -eq $claudeSkills) {
+        $configs = @((Join-Path $AgentHome '.claude.json'))
+        if ($env:CLAUDE_CONFIG_DIR) { $configs += Join-Path $env:CLAUDE_CONFIG_DIR '.claude.json' }
+        foreach ($config in $configs) {
+            if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { continue }
+            try {
+                $settings = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
+                foreach ($server in $settings.mcpServers.PSObject.Properties) {
+                    if ($server.Name -eq 'maya-mcp' -or ($server.Value | ConvertTo-Json -Depth 12 -Compress) -match $bridgePattern) { return $true }
+                }
+            } catch { Write-Warning "Could not inspect existing Maya MCP registration at $config" }
+        }
+    }
+    return $false
+}
+
 if ($SkillsOnly) {
     if (-not $SkipCodex) { Install-MayaSkill $codexSkills }
     if (-not $SkipClaudeCode) { Install-MayaSkill $claudeSkills }

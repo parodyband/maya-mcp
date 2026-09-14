@@ -99,6 +99,16 @@ The Maya-side updater:
    version's module descriptor;
 9. registers the matching native stdio bridge behind the same stable client
    launcher used by Codex and Claude Code.
+10. installs both companion skills for clients with managed skill receipts or an
+    existing Maya MCP registration, preserving customized files. Startup also
+    synchronizes skills to cover upgrades from older updater implementations.
+
+`maya-mcp` and `maya-animation-principles` include their full reference and UI
+metadata folders. `MAYA_MCP_DISABLE_SKILL_SYNC=1` disables automatic skill sync.
+MCP registrations and unrelated client configuration are not changed by this
+skill-only migration. Release validation includes `tests/skill_upgrade_test.py`,
+which runs the published 0.6.1 updater against both actual release ZIPs with
+isolated customer profiles.
 
 The updater never overwrites the DLL loaded by Maya. A restart activates the new
 descriptor. Older version folders remain available for rollback.

@@ -1,12 +1,22 @@
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
-    [string]$OutputDirectory = ''
+    [string]$OutputDirectory = '',
+    [hashtable]$PackageRoots = @{}
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'common.ps1')
+
+if ($PackageRoots.Count -and -not $SkipBuild) { throw 'PackageRoots requires SkipBuild; build the supplied packages first.' }
+foreach ($target in $PackageRoots.Keys) {
+    if ($target -notin @('2026.3', '2027')) { throw "Unsupported package target: $target" }
+}
+function Resolve-PackageRoot([string]$Target) {
+    if ($PackageRoots.ContainsKey($Target)) { return [IO.Path]::GetFullPath([string]$PackageRoots[$Target]) }
+    return Get-MayaMcpPackageDirectory -MayaVersion $Target
+}
 
 if (-not $SkipBuild) {
     & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -MayaVersion All
@@ -33,7 +43,7 @@ $claudeStaging = Join-Path $OutputDirectory ".staging-claude-desktop-$PID"
 Assert-ReleaseChild $claudeStaging
 if (Test-Path -LiteralPath $claudeStaging) { Remove-Item -LiteralPath $claudeStaging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $claudeStaging 'server') | Out-Null
-$bundleBridge = Join-Path (Get-MayaMcpPackageDirectory -MayaVersion '2027') 'maya-mcp\bin\maya-mcp-bridge.exe'
+$bundleBridge = Join-Path (Resolve-PackageRoot '2027') 'maya-mcp\bin\maya-mcp-bridge.exe'
 if (-not (Test-Path -LiteralPath $bundleBridge -PathType Leaf)) { throw 'Missing Maya MCP client bridge build.' }
 Copy-Item -LiteralPath $bundleBridge -Destination (Join-Path $claudeStaging 'server\maya-mcp-bridge.exe')
 $claudeManifest = (Get-Content -LiteralPath (Join-Path $repoRoot 'packaging\claude-desktop\manifest.json.in') -Raw).
@@ -55,7 +65,7 @@ Remove-Item -LiteralPath $claudeStaging -Recurse -Force
 
 $releaseAssets = @()
 foreach ($target in @('2026.3', '2027')) {
-    $packageRoot = Get-MayaMcpPackageDirectory -MayaVersion $target
+    $packageRoot = Resolve-PackageRoot $target
     $packageManifestPath = Join-Path $packageRoot 'package-manifest.json'
     $pluginPath = Join-Path $packageRoot 'maya-mcp\plug-ins\maya_mcp.mll'
     if (-not (Test-Path -LiteralPath $pluginPath)) { throw "Missing Maya $target Release build." }
@@ -92,7 +102,10 @@ foreach ($target in @('2026.3', '2027')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'configure-autoload.py') -Destination (Join-Path $staging 'configure-autoload.py')
     Copy-Item -LiteralPath $claudeAssetPath -Destination (Join-Path $staging 'Install-MayaMcp-Claude-Desktop.mcpb')
     Get-ChildItem -LiteralPath $staging -Directory -Filter '__pycache__' -Recurse |
-        Remove-Item -Recurse -Force
+        ForEach-Object {
+            Assert-ReleaseChild $_.FullName
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force
+        }
     Get-ChildItem -LiteralPath $staging -File -Recurse |
         Where-Object Extension -In @('.pyc', '.pyo') |
         Remove-Item -Force

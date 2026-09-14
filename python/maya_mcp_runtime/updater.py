@@ -369,6 +369,38 @@ def register_client_bridge(installed: Path, version: str) -> Path:
     return registered_bridge
 
 
+def sync_client_skills(installed: Path) -> None:
+    """Repair skill bundles for already registered clients, without reconfiguration."""
+    if os.getenv("MAYA_MCP_DISABLE_SKILL_SYNC", "").lower() in _TRUE_VALUES:
+        return
+    if not (installed / "client" / "skills" / "maya-mcp" / "SKILL.md").is_file():
+        return
+    import subprocess
+    completed = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-File", str(installed / "client" / "Configure-MayaMcpClients.ps1"),
+         "-SkillsOnly", "-ExistingSkillsOnly"],
+        capture_output=True, text=True, timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode:
+        raise UpdateError("Companion-skill update failed; run Configure AI Clients to repair")
+
+
+def start_skill_sync(installed: Path) -> None:
+    """Cover upgrades from releases whose updater did not install skills."""
+    if os.getenv("MAYA_MCP_DISABLE_SKILL_SYNC", "").lower() in _TRUE_VALUES:
+        return
+    def worker() -> None:
+        try:
+            sync_client_skills(installed)
+        except Exception as error:
+            # File/process work only. Do not call Maya from this worker.
+            import warnings
+            warnings.warn(f"Maya MCP skill setup failed: {error}")
+    _start_worker(worker, "MayaMcpSkillSync")
+
+
 def install_archive_bytes(
     update: dict[str, Any], payload: bytes, modules_directory: str | os.PathLike[str]
 ) -> dict[str, str]:
@@ -392,19 +424,7 @@ def install_archive_bytes(
 
         registered_bridge = register_client_bridge(installed, update["version"])
 
-        # Update only previously managed skills; never enroll a new client from
-        # a background package update. Older packages may not carry skills.
-        if (installed / "client" / "skills" / "maya-mcp" / "SKILL.md").is_file():
-            import subprocess
-            completed = subprocess.run(
-                ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                 "-File", str(installed / "client" / "Configure-MayaMcpClients.ps1"),
-                 "-SkillsOnly", "-ExistingSkillsOnly"],
-                capture_output=True, text=True, timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if completed.returncode:
-                raise UpdateError("Package staged but companion-skill update failed; run Configure AI Clients to repair")
+        sync_client_skills(installed)
 
         major = update["maya_major_version"]
         descriptor = modules / f"maya-mcp-{major}.mod"

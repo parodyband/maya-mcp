@@ -21,6 +21,7 @@ from .tools_viewport import VIEWPORT_HANDLERS
 from .tools_workflow import WORKFLOW_HANDLERS
 from .tools_observation import OBSERVATION_HANDLERS, attach_feedback, require_observation
 from .sessions import session_tool
+from .tools_animation import ANIMATION_HANDLERS
 
 HANDLERS = {
     **CORE_HANDLERS,
@@ -30,6 +31,7 @@ HANDLERS = {
     **VIEWPORT_HANDLERS,
     **WORKFLOW_HANDLERS,
     **OBSERVATION_HANDLERS,
+    **ANIMATION_HANDLERS,
     "maya.session": session_tool,
 }
 TOOL_DEFINITIONS = {tool["name"]: tool for tool in CATALOG["tools"]}

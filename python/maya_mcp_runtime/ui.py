@@ -180,6 +180,8 @@ def install_menu() -> None:
     cmds.menuItem(divider=True, parent=menu)
     cmds.menuItem(label="Configure AI Clients...", parent=menu, command=_configure_clients)
     cmds.menuItem(label="Check for Updates...", parent=menu, command=_check_for_updates)
+    from . import updater
+    updater.start_skill_sync(Path(__file__).resolve().parents[2])
     if os.getenv("MAYA_MCP_DISABLE_UPDATE_CHECK", "").lower() not in _TRUE_VALUES:
         from . import updater
 

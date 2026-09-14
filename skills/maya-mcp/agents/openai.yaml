@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maya MCP Operations"
+  short_description: "Use Maya tools efficiently and verify scene changes"
+  default_prompt: "Use $maya-mcp to inspect the scene, perform the requested changes efficiently, and verify the result."

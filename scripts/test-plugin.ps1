@@ -2,7 +2,8 @@
 param(
     [ValidateSet('2026.3', '2027')]
     [string]$MayaVersion = '2027',
-    [string]$MayaLocation = ''
+    [string]$MayaLocation = '',
+    [string]$PackageRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,7 +12,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $MayaLocation) {
     $MayaLocation = "C:\Program Files\Autodesk\Maya$(Get-MayaMcpMajorVersion -MayaVersion $MayaVersion)"
 }
-$packageRoot = Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion
+$packageRoot = if ($PackageRoot) { [IO.Path]::GetFullPath($PackageRoot) } else { Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion }
 $mayapy = Join-Path $MayaLocation 'bin\mayapy.exe'
 $plugin = Join-Path $packageRoot 'maya-mcp\plug-ins\maya_mcp.mll'
 if (-not (Test-Path -LiteralPath $mayapy)) { throw "mayapy was not found at $mayapy" }
@@ -52,6 +53,7 @@ try {
     $env:MAYA_MCP_TOOL_PROFILE = 'full'
 
     Invoke-MayaTest 'tests\workflow_test.py' 'Agent workflow and compact discovery test'
+    Invoke-MayaTest 'tests\animation_test.py' 'Animation evidence and editing test'
     Invoke-MayaTest 'tests\observation_test.py' 'Observation and feedback loop test'
     Invoke-MayaTest 'tests\change_journal_test.py' 'Scoped native change journal test'
     Invoke-MayaTest 'tests\session_test.py' 'Persistent Python session test'

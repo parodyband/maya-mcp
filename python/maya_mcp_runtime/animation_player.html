@@ -1,0 +1,91 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Animation review</title>
+<style>
+body{background:#14191f;color:#e8edf2;font:16px system-ui;margin:24px auto;max-width:1200px;padding:0 20px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:24px}button,select{background:#263544;color:inherit;border:1px solid #59738c;padding:8px 14px;border-radius:6px}button{cursor:pointer}#stage{position:relative}#image{display:block;width:100%;max-height:70vh;object-fit:contain;background:#090d11}#seek{width:100%}.bar{display:flex;gap:12px;align-items:center;margin:14px 0;flex-wrap:wrap}.note{padding:10px;border-bottom:1px solid #344454}.note button{margin-right:12px}#reference{max-width:100%;max-height:240px}small{color:#abc1d2}a{color:#83cff0}.marker{position:absolute;transform:translate(-50%,-50%);width:18px;height:18px;border:2px solid #ffd27b;border-radius:50%;pointer-events:none}
+</style>
+<header><h1 id="title"></h1><small id="status"></small></header>
+<div id="stage"><img id="image" alt="Captured animation frame"></div><input id="seek" aria-label="Frame" type="range" min="0" value="0">
+<div class="bar"><button id="previous" aria-label="Previous frame">Previous</button><button id="play">Play</button><button id="next" aria-label="Next frame">Next</button><select id="camera" aria-label="Camera"></select><select id="speed" aria-label="Playback speed"><option value="1">1x</option><option value="0.5">1/2x</option><option value="0.25">1/4x</option></select><label><input id="clean" type="checkbox"> Clean view</label><span id="time"></span></div>
+<p><small>Playback follows captured timestamps. Sparse captures hold until the next sample. Orange landmark ghosts precede the frame; green ghosts follow it.</small></p>
+<div id="notes"></div><div id="media"></div>
+<script>
+const data = PAYLOAD;
+const $ = id => document.getElementById(id);
+let frames = [], index = 0, timer = null, media = null, mediaOffset = 0, origin = 0;
+$('title').textContent = data.label;
+$('status').textContent = (data.complete ? 'Complete' : 'Partial capture') + ' | ' + data.fps.toFixed(3) + ' fps';
+for (const id of new Set(data.images.map(i => i.camera.node.node_id))) {
+  const option = document.createElement('option'); option.value = id;
+  option.textContent = data.images.find(i => i.camera.node.node_id === id).camera.node.name; $('camera').append(option);
+}
+function stop() { clearTimeout(timer); timer = null; $('play').textContent = 'Play'; if (media) media.pause(); }
+function syncMedia(seek) {
+  if (!media || !frames.length || !Number.isFinite(media.duration)) return;
+  const sourceTime = frames[index].seconds - mediaOffset;
+  if (sourceTime < 0 || sourceTime >= media.duration) { media.pause(); return; }
+  if (seek || Math.abs(media.currentTime-sourceTime)>0.2) media.currentTime = sourceTime;
+  media.playbackRate = Number($('speed').value);
+  if (timer !== null && media.paused) media.play().catch(() => {});
+}
+function markers() {
+  for (const marker of $('stage').querySelectorAll('.marker')) marker.remove();
+  if (!frames.length || !$('image').naturalWidth) return;
+  const image = $('image'), current = frames[index];
+  const scale = Math.min(image.clientWidth/image.naturalWidth, image.clientHeight/image.naturalHeight);
+  const left = (image.clientWidth-image.naturalWidth*scale)/2, top = (image.clientHeight-image.naturalHeight*scale)/2;
+  for (const note of data.notes) {
+    if (!note.image_xy || (note.time_range && (current.frame<note.time_range[0] || current.frame>note.time_range[1]))) continue;
+    const marker = document.createElement('span'); marker.className = 'marker';
+    marker.style.left = (left+note.image_xy[0]*image.naturalWidth*scale)+'px';
+    marker.style.top = (top+note.image_xy[1]*image.naturalHeight*scale)+'px'; $('stage').append(marker);
+  }
+}
+function show(seek = false) {
+  if (!frames.length) return; index = Math.min(index, frames.length-1); const frame = frames[index];
+  const filename = $('clean').checked ? (frame.clean_file || frame.file) : frame.file;
+  if ($('image').getAttribute('src') !== filename) $('image').src = filename;
+  $('seek').value = index; $('time').textContent = 'Frame '+frame.frame+' | '+frame.seconds.toFixed(3)+' s';
+  markers(); syncMedia(seek);
+}
+function choose() { stop(); frames = data.images.filter(i => i.camera.node.node_id === $('camera').value); $('seek').max = Math.max(0, frames.length-1); show(true); }
+function tick() {
+  const speed = Number($('speed').value), start = frames[0].seconds, end = frames[frames.length-1].seconds+1/data.fps;
+  const time = start+(((performance.now()-origin)*speed/1000) % (end-start));
+  index = 0; for (let i=1; i<frames.length && frames[i].seconds<=time; i++) index=i;
+  show(); timer = setTimeout(tick, 16);
+}
+$('camera').onchange = choose;
+$('seek').oninput = () => { stop(); index = Number($('seek').value); show(true); };
+$('previous').onclick = () => { stop(); index = Math.max(0,index-1); show(true); };
+$('next').onclick = () => { stop(); index = Math.min(frames.length-1,index+1); show(true); };
+$('clean').onchange = () => show();
+$('play').onclick = () => {
+  if (timer !== null) { stop(); return; } if (!frames.length) return;
+  origin = performance.now()-(frames[index].seconds-frames[0].seconds)*1000/Number($('speed').value);
+  $('play').textContent = 'Pause'; tick(); syncMedia(true);
+};
+$('speed').onchange = () => { if(timer !== null) origin = performance.now()-(frames[index].seconds-frames[0].seconds)*1000/Number($('speed').value); syncMedia(true); };
+$('image').onload = markers; window.addEventListener('resize', markers);
+for (const note of data.notes) {
+  const row = document.createElement('div'); row.className = 'note';
+  if (note.time_range) {
+    const button = document.createElement('button'); button.textContent = 'Frames '+note.time_range.join('-');
+    button.onclick = () => { stop(); const next = frames.findIndex(f => f.frame>=note.time_range[0]); index = next<0 ? frames.length-1 : next; show(true); }; row.append(button);
+  }
+  const text = document.createElement('span'); text.textContent = note.text; row.append(text);
+  if (note.reference) {
+    let ref = note.reference.split(String.fromCharCode(92)).join('/'); if (/^[A-Za-z]:\//.test(ref)) ref='file:///'+ref;
+    try {
+      const url = new URL(ref, location.href);
+      if (['http:', 'https:', 'file:'].includes(url.protocol)) {
+        const link = document.createElement('a'); link.href=url.href; link.textContent=' Open reference'; link.target='_blank'; link.rel='noopener'; row.append(link);
+        if (!media && /\.(wav|mp3|ogg|m4a|mp4|webm)$/i.test(url.pathname)) {
+          media=document.createElement(/\.(mp4|webm)$/i.test(url.pathname)?'video':'audio'); media.id='reference'; media.src=url.href; media.controls=true; media.preload='none'; mediaOffset=note.reference_offset_seconds || 0; $('media').append(media);
+        }
+      }
+    } catch (_) { /* Invalid references remain readable as ordinary notes. */ }
+  }
+  $('notes').append(row);
+}
+choose();
+</script></html>

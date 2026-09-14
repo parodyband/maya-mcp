@@ -992,6 +992,11 @@ TOOLS.extend([
 ])
 
 
+from .animation_schema import definitions as animation_definitions
+
+TOOLS.extend(animation_definitions(_tool, _object, NODE_SELECTOR, VECTOR3))
+
+
 RESOURCES = [
     {"uri": "maya://context", "name": "Maya Context", "description": "Current scene, time, selection, units, and viewport context.", "mimeType": "application/json"},
     {"uri": "maya://scene/summary", "name": "Scene Summary", "description": "Bounded DAG, node-type, reference, and scene-state summary.", "mimeType": "application/json"},

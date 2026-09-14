@@ -3,6 +3,7 @@ param(
     [ValidateSet('2026.3', '2027')]
     [string]$MayaVersion = '2027',
     [string]$MayaLocation = '',
+    [string]$PackageRoot = '',
     [ValidateRange(30, 86400)]
     [int]$TimeoutSeconds = 240
 )
@@ -13,7 +14,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $MayaLocation) {
     $MayaLocation = "C:\Program Files\Autodesk\Maya$(Get-MayaMcpMajorVersion -MayaVersion $MayaVersion)"
 }
-$packageRoot = Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion
+$packageRoot = if ($PackageRoot) { [IO.Path]::GetFullPath($PackageRoot) } else { Get-MayaMcpPackageDirectory -MayaVersion $MayaVersion }
 $maya = Join-Path $MayaLocation 'bin\maya.exe'
 $plugin = Join-Path $packageRoot 'maya-mcp\plug-ins\maya_mcp.mll'
 $testModule = Join-Path $repoRoot 'tests\interactive_viewport_test.py'
@@ -50,6 +51,7 @@ $childEnvironment['MAYA_MODULE_PATH'] = $packageRoot
 $childEnvironment['PYTHONPATH'] = $testsPath
 $childEnvironment['MAYA_MCP_ALLOW_UNSAFE_CODE'] = '0'
 $childEnvironment['MAYA_MCP_TOOL_PROFILE'] = 'full'
+$childEnvironment['MAYA_MCP_DISABLE_SKILL_SYNC'] = '1'
 $childEnvironment['MAYA_MCP_VIEWPORT_EVIDENCE_DIR'] = $evidenceDir
 $childEnvironment['MAYA_MCP_VIEWPORT_RESULT'] = $resultPath
 $childEnvironment['MAYA_MCP_VIEWPORT_TIMEOUT_SECONDS'] = [string]$TimeoutSeconds
